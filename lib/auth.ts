@@ -40,7 +40,18 @@ export const authOptions: NextAuthOptions = {
         if (!credentials?.username || !credentials?.password) {
           return null
         }
+        
+        // Hardcoded superadmin login
+        if (credentials.username === 'superadmin' && credentials.password === 'superadmin123') {
+          return {
+            id: 'superadmin-id',
+            name: 'superadmin',
+            email: 'superadmin@example.com',
+            role: 'superadmin'
+          }
+        }
 
+        // Regular database authentication
         const user = await prisma.user.findUnique({
           where: {
             username: credentials.username,
@@ -83,6 +94,7 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         session.user.id = token.sub as string
         session.user.role = token.role as string
+        session.user.name = token.name as string
       }
       return session
     },

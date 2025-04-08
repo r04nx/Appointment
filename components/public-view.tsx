@@ -23,14 +23,8 @@ export default function PublicView() {
 
   // Filter schedule data based on selected filters
   const filteredSchedule = scheduleData.filter((entry) => {
-    const entryDate = new Date(entry.date)
-    const selectedDate = date ? new Date(date) : new Date()
-
-    const sameDay =
-      entryDate.getDate() === selectedDate.getDate() &&
-      entryDate.getMonth() === selectedDate.getMonth() &&
-      entryDate.getFullYear() === selectedDate.getFullYear()
-
+    // Don't filter by date since we're already fetching by date from the API
+    // The API query already includes the date parameter
     const meetingTypeMatch = meetingType === "all" || entry.type === meetingType
 
     let timeRangeMatch = true
@@ -43,7 +37,7 @@ export default function PublicView() {
       timeRangeMatch = Number.parseInt(entry.startTime.split(":")[0]) >= 17
     }
 
-    return sameDay && meetingTypeMatch && timeRangeMatch
+    return meetingTypeMatch && timeRangeMatch
   })
 
   // Get unique meeting types for filter
@@ -55,7 +49,11 @@ export default function PublicView() {
       try {
         let url = "/api/schedule"
         if (date) {
-          const formattedDate = date.toISOString().split("T")[0]
+          // Format date without timezone conversion to prevent date shift
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          const formattedDate = `${year}-${month}-${day}`;
           url += `?date=${formattedDate}`
         }
 
@@ -192,15 +190,55 @@ export default function PublicView() {
 
                           const startPosition = (startHour - 8) * 80 + (startMinute / 60) * 80
                           const duration = (((endHour - startHour) * 60 + (endMinute - startMinute)) / 60) * 80
+                          
+                          // Calculate overlapping entries to adjust width
+                          const overlaps = filteredSchedule.filter((otherEntry, otherIndex) => {
+                            if (index === otherIndex) return false;
+                            
+                            const otherStartHour = Number.parseInt(otherEntry.startTime.split(":")[0])
+                            const otherStartMinute = Number.parseInt(otherEntry.startTime.split(":")[1])
+                            const otherEndHour = Number.parseInt(otherEntry.endTime.split(":")[0])
+                            const otherEndMinute = Number.parseInt(otherEntry.endTime.split(":")[1])
+                            
+                            // Check if there's an overlap
+                            const entryStart = startHour * 60 + startMinute
+                            const entryEnd = endHour * 60 + endMinute
+                            const otherStart = otherStartHour * 60 + otherStartMinute
+                            const otherEnd = otherEndHour * 60 + otherEndMinute
+                            
+                            return (entryStart < otherEnd && entryEnd > otherStart)
+                          })
+                          
+                          // Adjust width and position based on overlaps
+                          const hasOverlaps = overlaps.length > 0
+                          const overlapWidth = hasOverlaps ? (100 / (overlaps.length + 1)) : 100
+                          const overlapIndex = hasOverlaps ? overlaps.findIndex(o => 
+                            o.startTime < entry.startTime || 
+                            (o.startTime === entry.startTime && o.id < entry.id)
+                          ) + 1 : 0
 
                           return (
                             <div
                               key={index}
-                              className="absolute left-2 right-2 rounded-md p-2 shadow-sm overflow-hidden"
+                              className="absolute rounded-md p-2 shadow-sm overflow-hidden group transition-all duration-200 hover:shadow-md"
                               style={{
                                 top: `${startPosition}px`,
                                 height: `${duration}px`,
                                 backgroundColor: entry.color,
+                                width: hasOverlaps ? `calc(${overlapWidth}% - 8px)` : 'calc(100% - 16px)',
+                                left: hasOverlaps ? `calc(${overlapIndex * overlapWidth}% + 4px)` : '8px',
+                                transition: 'z-index 0s, transform 0.2s, box-shadow 0.2s',
+                                zIndex: 1
+                              }}
+                              onMouseEnter={(e) => {
+                                // Set a higher z-index on hover
+                                e.currentTarget.style.zIndex = '10';
+                                e.currentTarget.style.transform = 'scale(1.02)';
+                              }}
+                              onMouseLeave={(e) => {
+                                // Reset z-index when not hovering
+                                e.currentTarget.style.zIndex = '1';
+                                e.currentTarget.style.transform = 'scale(1)';
                               }}
                             >
                               <div className="text-white text-sm font-medium truncate">{entry.title}</div>

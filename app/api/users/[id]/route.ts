@@ -7,9 +7,10 @@ import { authOptions } from "@/lib/auth"
 // GET /api/users/[id] - Get a specific user (superadmin only)
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions)
+  const { id } = context.params
 
   // Check if user is authenticated and is a superadmin
   if (!session || session.user.role !== "superadmin") {
@@ -18,7 +19,7 @@ export async function GET(
 
   try {
     const user = await prisma.user.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: {
         id: true,
         username: true,
@@ -40,9 +41,10 @@ export async function GET(
 // PUT /api/users/[id] - Update a user (superadmin only)
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions)
+  const { id } = context.params
 
   // Check if user is authenticated and is a superadmin
   if (!session || session.user.role !== "superadmin") {
@@ -54,7 +56,7 @@ export async function PUT(
 
     // Check if user exists
     const existingUser = await prisma.user.findUnique({
-      where: { id: params.id },
+      where: { id },
     })
 
     if (!existingUser) {
@@ -79,7 +81,7 @@ export async function PUT(
 
     // Update user
     const updatedUser = await prisma.user.update({
-      where: { id: params.id },
+      where: { id },
       data: updateData,
       select: {
         id: true,
@@ -98,9 +100,10 @@ export async function PUT(
 // DELETE /api/users/[id] - Delete a user (superadmin only)
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
   const session = await getServerSession(authOptions)
+  const { id } = context.params
 
   // Check if user is authenticated and is a superadmin
   if (!session || session.user.role !== "superadmin") {
@@ -110,7 +113,7 @@ export async function DELETE(
   try {
     // Check if user exists
     const existingUser = await prisma.user.findUnique({
-      where: { id: params.id },
+      where: { id },
     })
 
     if (!existingUser) {
@@ -124,7 +127,7 @@ export async function DELETE(
 
     // Delete user
     await prisma.user.delete({
-      where: { id: params.id },
+      where: { id },
     })
 
     return NextResponse.json({ message: "User deleted successfully" })

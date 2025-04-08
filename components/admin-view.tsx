@@ -18,6 +18,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -25,6 +26,45 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { formatDate } from "@/lib/utils"
 import type { ScheduleEntry } from "@/lib/types"
 import { toast } from "@/components/ui/use-toast"
+
+// Interface for validation
+interface ValidatableScheduleEntry {
+  id?: string
+  title?: string
+  date?: string | Date
+  startTime?: string
+  endTime?: string
+  type?: string
+  status?: string
+  color?: string
+  meetingWith?: string
+  location?: string
+  description?: string
+}
+
+// Predefined colors for schedule entries
+const predefinedColors = [
+  { name: "Blue", value: "#4f46e5" },
+  { name: "Red", value: "#ef4444" },
+  { name: "Green", value: "#10b981" },
+  { name: "Purple", value: "#8b5cf6" },
+  { name: "Orange", value: "#f97316" },
+  { name: "Pink", value: "#ec4899" },
+  { name: "Teal", value: "#14b8a6" },
+  { name: "Yellow", value: "#eab308" },
+  { name: "Gray", value: "#6b7280" },
+  { name: "Indigo", value: "#6366f1" },
+]
+
+// Map meeting types to default colors
+const meetingTypeColors = {
+  "meeting": "#4f46e5", // Blue
+  "appointment": "#8b5cf6", // Purple
+  "event": "#f97316", // Orange
+  "class": "#10b981", // Green
+  "office-hours": "#14b8a6", // Teal
+  "unavailable": "#6b7280", // Gray
+}
 
 export default function AdminView() {
   const [scheduleData, setScheduleData] = useState<ScheduleEntry[]>([])
@@ -51,6 +91,18 @@ export default function AdminView() {
     location: "",
     description: "",
   })
+  
+  // Update newEntry date when calendar date changes
+  useEffect(() => {
+    if (date) {
+      // Format date without timezone conversion to prevent date shift
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const formattedDate = `${year}-${month}-${day}`;
+      setNewEntry(prev => ({ ...prev, date: formattedDate }))
+    }
+  }, [date])
 
   // Fetch schedule data
   useEffect(() => {
@@ -59,7 +111,11 @@ export default function AdminView() {
       try {
         let url = "/api/schedule"
         if (date) {
-          const formattedDate = date.toISOString().split("T")[0]
+          // Format date without timezone conversion to prevent date shift
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          const formattedDate = `${year}-${month}-${day}`;
           url += `?date=${formattedDate}`
         }
 
@@ -89,14 +145,8 @@ export default function AdminView() {
 
   // Filter schedule data based on selected filters
   const filteredSchedule = scheduleData.filter((entry) => {
-    const entryDate = new Date(entry.date)
-    const selectedDate = date ? new Date(date) : new Date()
-
-    const sameDay =
-      entryDate.getDate() === selectedDate.getDate() &&
-      entryDate.getMonth() === selectedDate.getMonth() &&
-      entryDate.getFullYear() === selectedDate.getFullYear()
-
+    // Don't filter by date since we're already fetching by date from the API
+    // The API query already includes the date parameter
     const meetingTypeMatch = meetingType === "all" || entry.type === meetingType
 
     let timeRangeMatch = true
@@ -109,7 +159,7 @@ export default function AdminView() {
       timeRangeMatch = Number.parseInt(entry.startTime.split(":")[0]) >= 17
     }
 
-    return sameDay && meetingTypeMatch && timeRangeMatch
+    return meetingTypeMatch && timeRangeMatch
   })
 
   // Get unique meeting types for filter
@@ -142,16 +192,91 @@ export default function AdminView() {
     })
   }
 
+  // Validation function for schedule entries
+  const validateScheduleEntry = (entry: ValidatableScheduleEntry) => {
+    const errors = []
+    
+    // Check required fields
+    if (!entry.title) errors.push("Title is required")
+    if (!entry.date) errors.push("Date is required")
+    if (!entry.startTime) errors.push("Start time is required")
+    if (!entry.endTime) errors.push("End time is required")
+    if (!entry.type) errors.push("Meeting type is required")
+    if (!entry.status) errors.push("Status is required")
+    
+    // Check time logic
+    if (entry.startTime && entry.endTime) {
+      const startMinutes = convertTimeToMinutes(entry.startTime)
+      const endMinutes = convertTimeToMinutes(entry.endTime)
+      
+      if (startMinutes >= endMinutes) {
+        errors.push("End time must be after start time")
+      }
+      
+      // Check if duration is reasonable (e.g., not more than 8 hours)
+      const durationHours = (endMinutes - startMinutes) / 60
+      if (durationHours > 8) {
+        errors.push(`Meeting duration is ${durationHours.toFixed(1)} hours. Consider breaking into multiple entries.`)
+      }
+    }
+    
+    return errors
+  }
+  
+  // Helper function to convert time string to minutes
+  const convertTimeToMinutes = (timeString: string) => {
+    const [hours, minutes] = timeString.split(':').map(Number)
+    return hours * 60 + minutes
+  }
+  
+  // State for validation warnings
+  const [validationWarningOpen, setValidationWarningOpen] = useState(false)
+  const [validationWarnings, setValidationWarnings] = useState<string[]>([])
+  const [pendingSubmission, setPendingSubmission] = useState<string>("") // "add" or "update"
+  
+  // Ensure the validation dialog is properly initialized
+  useEffect(() => {
+    // This ensures the validation dialog state is properly initialized
+    if (validationWarnings.length > 0 && pendingSubmission && !validationWarningOpen) {
+      setValidationWarningOpen(true)
+    }
+  }, [validationWarnings, pendingSubmission, validationWarningOpen])
+
   const handleAddEntry = async () => {
-    if (!newEntry.title || !newEntry.date || !newEntry.startTime || !newEntry.endTime) {
+    // Validate the entry
+    const validationErrors = validateScheduleEntry(newEntry)
+    
+    // If there are validation errors that are critical, show toast and return
+    const criticalErrors = validationErrors.filter(error => 
+      error.includes("required") || error.includes("must be after")
+    )
+    
+    if (criticalErrors.length > 0) {
       toast({
         title: "Validation Error",
-        description: "Please fill in all required fields",
+        description: criticalErrors.join(", "),
         variant: "destructive",
       })
       return
     }
+    
+    // If there are non-critical warnings, show warning dialog
+    const warnings = validationErrors.filter(error => 
+      !error.includes("required") && !error.includes("must be after")
+    )
+    
+    if (warnings.length > 0) {
+      setValidationWarnings(warnings)
+      setPendingSubmission("add")
+      setValidationWarningOpen(true)
+      return
+    }
 
+    await proceedWithAddEntry()
+  }
+  
+  // Function to proceed with adding an entry after all validations
+  const proceedWithAddEntry = async () => {
     setIsSubmitting(true)
 
     try {
@@ -170,9 +295,15 @@ export default function AdminView() {
       const createdEntry = await response.json()
 
       // Reset form
+      const currentDate = date || new Date();
+      const year = currentDate.getFullYear();
+      const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+      const day = String(currentDate.getDate()).padStart(2, '0');
+      const formattedDate = `${year}-${month}-${day}`;
+      
       setNewEntry({
         title: "",
-        date: date ? date.toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+        date: formattedDate,
         startTime: "08:00",
         endTime: "09:00",
         type: "meeting",
@@ -186,8 +317,9 @@ export default function AdminView() {
       setIsDialogOpen(false)
 
       // Fetch updated schedule data to refresh the calendar
-      const formattedDate = newEntry.date
-      const fetchUrl = `/api/schedule?date=${formattedDate}`
+      // Use the date from newEntry for the API call
+      const entryDate = newEntry.date
+      const fetchUrl = `/api/schedule?date=${entryDate}`
       const refreshResponse = await fetch(fetchUrl)
       
       if (refreshResponse.ok) {
@@ -216,7 +348,43 @@ export default function AdminView() {
 
   const handleUpdateEntry = async () => {
     if (!editingEntry) return
+    
+    // Validate the entry
+    const validationErrors = validateScheduleEntry(editingEntry)
+    
+    // If there are validation errors that are critical, show toast and return
+    const criticalErrors = validationErrors.filter(error => 
+      error.includes("required") || error.includes("must be after")
+    )
+    
+    if (criticalErrors.length > 0) {
+      toast({
+        title: "Validation Error",
+        description: criticalErrors.join(", "),
+        variant: "destructive",
+      })
+      return
+    }
+    
+    // If there are non-critical warnings, show warning dialog
+    const warnings = validationErrors.filter(error => 
+      !error.includes("required") && !error.includes("must be after")
+    )
+    
+    if (warnings.length > 0) {
+      setValidationWarnings(warnings)
+      setPendingSubmission("update")
+      setValidationWarningOpen(true)
+      return
+    }
 
+    await proceedWithUpdateEntry()
+  }
+  
+  // Function to proceed with updating an entry after all validations
+  const proceedWithUpdateEntry = async () => {
+    if (!editingEntry) return
+    
     setIsSubmitting(true)
 
     try {
@@ -265,6 +433,14 @@ export default function AdminView() {
     }
   }
 
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [entryToDelete, setEntryToDelete] = useState<string | null>(null)
+
+  const confirmDelete = (id: string) => {
+    setEntryToDelete(id)
+    setDeleteConfirmOpen(true)
+  }
+
   const handleDeleteEntry = async (id: string) => {
     try {
       // Find the entry to get its date before deleting
@@ -307,8 +483,49 @@ export default function AdminView() {
         description: "Failed to delete schedule entry. Please try again.",
         variant: "destructive",
       })
+    } finally {
+      setDeleteConfirmOpen(false)
+      setEntryToDelete(null)
     }
   }
+
+  // Check if a time slot overlaps with existing entries
+  const checkOverlap = (startTime: string, endTime: string, date: string) => {
+    // Filter schedule entries for the current date
+    const entriesForDate = scheduleData.filter(entry => entry.date === date)
+    
+    if (entriesForDate.length === 0) return { overlaps: false }
+    
+    // Convert times to minutes for easier comparison
+    const convertToMinutes = (time: string) => {
+      const [hours, minutes] = time.split(':').map(Number)
+      return hours * 60 + minutes
+    }
+    
+    const newStartMinutes = convertToMinutes(startTime)
+    const newEndMinutes = convertToMinutes(endTime)
+    
+    // Check for overlaps
+    const overlappingEntries = entriesForDate.filter(entry => {
+      const entryStartMinutes = convertToMinutes(entry.startTime)
+      const entryEndMinutes = convertToMinutes(entry.endTime)
+      
+      // Check if the new entry overlaps with this existing entry
+      return (
+        (newStartMinutes < entryEndMinutes && newEndMinutes > entryStartMinutes) ||
+        (entryStartMinutes < newEndMinutes && entryEndMinutes > newStartMinutes)
+      )
+    })
+    
+    return {
+      overlaps: overlappingEntries.length > 0,
+      entries: overlappingEntries
+    }
+  }
+
+  const [overlapWarningOpen, setOverlapWarningOpen] = useState(false)
+  const [overlappingEntries, setOverlappingEntries] = useState<any[]>([])
+  const [pendingEntry, setPendingEntry] = useState<any>(null)
 
   const handleCreateFromSelection = () => {
     if (selectedTimeSlots.length === 0) {
@@ -322,13 +539,56 @@ export default function AdminView() {
 
     // Sort selected time slots
     const sortedSlots = [...selectedTimeSlots].sort()
-
-    // Set start and end times based on selection
+    
+    // Get the start time from the first selected slot
+    const startTime = sortedSlots[0]
+    
+    // Calculate the end time correctly
+    // For the last selected slot, we need to add 30 minutes to get the proper end time
+    const lastSlot = sortedSlots[sortedSlots.length - 1]
+    let endHour = parseInt(lastSlot.split(':')[0])
+    let endMinute = parseInt(lastSlot.split(':')[1])
+    
+    // Add 30 minutes to the last slot to get the correct end time
+    if (endMinute === 30) {
+      endHour += 1
+      endMinute = 0
+    } else {
+      endMinute = 30
+    }
+    
+    const endTime = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`
+    
+    // Format date without timezone conversion
+    const currentDate = date || new Date()
+    const year = currentDate.getFullYear()
+    const month = String(currentDate.getMonth() + 1).padStart(2, '0')
+    const day = String(currentDate.getDate()).padStart(2, '0')
+    const formattedDate = `${year}-${month}-${day}`
+    
+    // Check for overlaps with existing entries
+    const { overlaps, entries } = checkOverlap(startTime, endTime, formattedDate)
+    
+    if (overlaps) {
+      // Store the overlapping entries and the pending entry
+      setOverlappingEntries(entries || [])
+      setPendingEntry({
+        date: formattedDate,
+        startTime: startTime,
+        endTime: endTime,
+      })
+      
+      // Show the overlap warning dialog
+      setOverlapWarningOpen(true)
+      return
+    }
+    
+    // No overlaps, proceed with creating the entry
     setNewEntry((prev) => ({
       ...prev,
-      date: date ? date.toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
-      startTime: sortedSlots[0],
-      endTime: sortedSlots[sortedSlots.length - 1],
+      date: formattedDate,
+      startTime: startTime,
+      endTime: endTime,
     }))
 
     setIsDialogOpen(true)
@@ -346,7 +606,20 @@ export default function AdminView() {
         <div className="flex gap-2">
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="bg-blue-600 hover:bg-blue-700">
+              <Button 
+                className="bg-blue-600 hover:bg-blue-700"
+                onClick={() => {
+                  // Ensure the date in the form matches the currently selected date
+                  if (date) {
+                    // Format date without timezone conversion to prevent date shift
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getDate()).padStart(2, '0');
+                    const formattedDate = `${year}-${month}-${day}`;
+                    setNewEntry(prev => ({ ...prev, date: formattedDate }))
+                  }
+                }}
+              >
                 <Plus className="h-4 w-4 mr-2" />
                 Add Entry
               </Button>
@@ -404,7 +677,14 @@ export default function AdminView() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="type">Meeting Type *</Label>
-                    <Select value={newEntry.type} onValueChange={(value) => setNewEntry({ ...newEntry, type: value })}>
+                    <Select 
+                      value={newEntry.type} 
+                      onValueChange={(value) => {
+                        // Set default color based on meeting type
+                        const defaultColor = meetingTypeColors[value as keyof typeof meetingTypeColors] || "#4f46e5";
+                        setNewEntry({ ...newEntry, type: value, color: defaultColor });
+                      }}
+                    >
                       <SelectTrigger id="type">
                         <SelectValue placeholder="Select type" />
                       </SelectTrigger>
@@ -437,19 +717,33 @@ export default function AdminView() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="color">Color</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="color"
-                      type="color"
-                      value={newEntry.color}
-                      onChange={(e) => setNewEntry({ ...newEntry, color: e.target.value })}
-                      className="w-12 h-10 p-1"
-                    />
-                    <Input
-                      value={newEntry.color}
-                      onChange={(e) => setNewEntry({ ...newEntry, color: e.target.value })}
-                      className="flex-1"
-                    />
+                  <div className="flex flex-col gap-2">
+                    <div className="flex gap-2">
+                      <Input
+                        id="color"
+                        type="color"
+                        value={newEntry.color}
+                        onChange={(e) => setNewEntry({ ...newEntry, color: e.target.value })}
+                        className="w-12 h-10 p-1"
+                      />
+                      <Input
+                        value={newEntry.color}
+                        onChange={(e) => setNewEntry({ ...newEntry, color: e.target.value })}
+                        className="flex-1"
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {predefinedColors.map((color) => (
+                        <button
+                          key={color.value}
+                          type="button"
+                          className={`w-8 h-8 rounded-full border ${newEntry.color === color.value ? 'ring-2 ring-offset-2 ring-blue-500' : 'border-gray-200'}`}
+                          style={{ backgroundColor: color.value }}
+                          title={color.name}
+                          onClick={() => setNewEntry({ ...newEntry, color: color.value })}
+                        />
+                      ))}
+                    </div>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -492,6 +786,118 @@ export default function AdminView() {
             </DialogContent>
           </Dialog>
 
+          {/* Validation Warning Dialog */}
+          <AlertDialog open={validationWarningOpen} onOpenChange={setValidationWarningOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Schedule Entry Warning</AlertDialogTitle>
+                <AlertDialogDescription>
+                  <div className="space-y-4">
+                    <p>The following issues were detected with your schedule entry:</p>
+                    
+                    <div className="max-h-40 overflow-y-auto border rounded-md p-2 bg-yellow-50">
+                      <ul className="list-disc pl-5 space-y-1">
+                        {validationWarnings.map((warning, index) => (
+                          <li key={index} className="text-amber-700">{warning}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    
+                    <p>Do you want to proceed anyway?</p>
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel asChild>
+                  <Button variant="outline" onClick={() => {
+                    setValidationWarningOpen(false)
+                    setPendingSubmission("")
+                    setValidationWarnings([])
+                  }}>
+                    Cancel
+                  </Button>
+                </AlertDialogCancel>
+                <AlertDialogAction asChild>
+                  <Button onClick={async () => {
+                    setValidationWarningOpen(false)
+                    
+                    // Proceed with the appropriate action
+                    if (pendingSubmission === "add") {
+                      await proceedWithAddEntry()
+                    } else if (pendingSubmission === "update") {
+                      await proceedWithUpdateEntry()
+                    }
+                    
+                    setPendingSubmission("")
+                    setValidationWarnings([])
+                  }}>
+                    Proceed Anyway
+                  </Button>
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          
+          {/* Overlap Warning Dialog */}
+          <AlertDialog open={overlapWarningOpen} onOpenChange={setOverlapWarningOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Schedule Conflict Detected</AlertDialogTitle>
+                <AlertDialogDescription>
+                  <div className="space-y-4">
+                    <p>The time slot you selected overlaps with {overlappingEntries.length} existing {overlappingEntries.length === 1 ? 'entry' : 'entries'}:</p>
+                    
+                    <div className="max-h-40 overflow-y-auto border rounded-md p-2">
+                      {overlappingEntries.map((entry, index) => (
+                        <div key={index} className="p-2 mb-2 bg-gray-50 rounded border-l-4" style={{ borderLeftColor: entry.color || '#4f46e5' }}>
+                          <p className="font-medium">{entry.title}</p>
+                          <p className="text-sm text-gray-500">{entry.startTime} - {entry.endTime}</p>
+                          <p className="text-xs text-gray-400">{entry.type}</p>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    <p>Do you still want to create a schedule entry during this time?</p>
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel asChild>
+                  <Button variant="outline" onClick={() => {
+                    setOverlapWarningOpen(false)
+                    setPendingEntry(null)
+                    setOverlappingEntries([])
+                  }}>
+                    Cancel
+                  </Button>
+                </AlertDialogCancel>
+                <AlertDialogAction asChild>
+                  <Button onClick={() => {
+                    // Proceed with creating the entry despite the overlap
+                    setOverlapWarningOpen(false)
+                    
+                    if (pendingEntry) {
+                      setNewEntry((prev) => ({
+                        ...prev,
+                        date: pendingEntry.date,
+                        startTime: pendingEntry.startTime,
+                        endTime: pendingEntry.endTime,
+                      }))
+                      
+                      setIsDialogOpen(true)
+                      setIsSelecting(false)
+                      setSelectedTimeSlots([])
+                      setPendingEntry(null)
+                      setOverlappingEntries([])
+                    }
+                  }}>
+                    Create Anyway
+                  </Button>
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          
           {isSelecting ? (
             <div className="flex gap-2">
               <Button variant="outline" onClick={handleCreateFromSelection} className="flex items-center gap-2">
@@ -536,26 +942,19 @@ export default function AdminView() {
                 Legend
               </h3>
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded-full bg-blue-500"></div>
-                  <span className="text-sm">Meeting</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded-full bg-green-500"></div>
-                  <span className="text-sm">Appointment</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded-full bg-purple-500"></div>
-                  <span className="text-sm">Event</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded-full bg-yellow-500"></div>
-                  <span className="text-sm">Class</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded-full bg-red-500"></div>
-                  <span className="text-sm">Unavailable</span>
-                </div>
+                {Object.entries(meetingTypeColors).map(([type, color]) => (
+                  <div key={type} className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded-full" style={{ backgroundColor: color }}></div>
+                    <span className="text-sm">
+                      {type === "meeting" ? "Meeting" :
+                       type === "appointment" ? "Appointment" :
+                       type === "event" ? "Event" :
+                       type === "class" ? "Class" :
+                       type === "office-hours" ? "Office Hours" :
+                       type === "unavailable" ? "Unavailable" : type}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           </CardContent>
@@ -658,20 +1057,22 @@ export default function AdminView() {
                               {isSelecting && (
                                 <>
                                   <div
-                                    className={`absolute left-0 right-0 top-0 h-[50%] cursor-pointer hover:bg-blue-100 ${
+                                    className={`absolute left-0 right-0 top-0 h-[50%] cursor-pointer hover:bg-blue-100/50 ${
                                       selectedTimeSlots.includes(`${hour.toString().padStart(2, "0")}:00`)
-                                        ? "bg-blue-200"
+                                        ? "bg-blue-300/40 border border-blue-400/50 backdrop-blur-[1px]"
                                         : ""
                                     }`}
                                     onClick={() => handleTimeSlotClick(`${hour.toString().padStart(2, "0")}:00`)}
+                                    style={{ zIndex: 3 }} // Higher z-index to ensure it's clickable
                                   ></div>
                                   <div
-                                    className={`absolute left-0 right-0 top-[50%] h-[50%] cursor-pointer hover:bg-blue-100 ${
+                                    className={`absolute left-0 right-0 top-[50%] h-[50%] cursor-pointer hover:bg-blue-100/50 ${
                                       selectedTimeSlots.includes(`${hour.toString().padStart(2, "0")}:30`)
-                                        ? "bg-blue-200"
+                                        ? "bg-blue-300/40 border border-blue-400/50 backdrop-blur-[1px]"
                                         : ""
                                     }`}
                                     onClick={() => handleTimeSlotClick(`${hour.toString().padStart(2, "0")}:30`)}
+                                    style={{ zIndex: 3 }} // Higher z-index to ensure it's clickable
                                   ></div>
                                 </>
                               )}
@@ -679,9 +1080,8 @@ export default function AdminView() {
                           )
                         })}
 
-                        {/* Schedule entries */}
-                        {!isSelecting &&
-                          filteredSchedule.map((entry, index) => {
+                        {/* Schedule entries - show during both normal view and selection mode */}
+                        {filteredSchedule.map((entry, index) => {
                             const startHour = Number.parseInt(entry.startTime.split(":")[0])
                             const startMinute = Number.parseInt(entry.startTime.split(":")[1])
                             const endHour = Number.parseInt(entry.endTime.split(":")[0])
@@ -690,14 +1090,54 @@ export default function AdminView() {
                             const startPosition = (startHour - 8) * 80 + (startMinute / 60) * 80
                             const duration = (((endHour - startHour) * 60 + (endMinute - startMinute)) / 60) * 80
 
+                            // Calculate overlapping entries to adjust width
+                            const overlaps = filteredSchedule.filter((otherEntry, otherIndex) => {
+                              if (index === otherIndex) return false;
+                              
+                              const otherStartHour = Number.parseInt(otherEntry.startTime.split(":")[0])
+                              const otherStartMinute = Number.parseInt(otherEntry.startTime.split(":")[1])
+                              const otherEndHour = Number.parseInt(otherEntry.endTime.split(":")[0])
+                              const otherEndMinute = Number.parseInt(otherEntry.endTime.split(":")[1])
+                              
+                              // Check if there's an overlap
+                              const entryStart = startHour * 60 + startMinute
+                              const entryEnd = endHour * 60 + endMinute
+                              const otherStart = otherStartHour * 60 + otherStartMinute
+                              const otherEnd = otherEndHour * 60 + otherEndMinute
+                              
+                              return (entryStart < otherEnd && entryEnd > otherStart)
+                            })
+                            
+                            // Adjust width and position based on overlaps
+                            const hasOverlaps = overlaps.length > 0
+                            const overlapWidth = hasOverlaps ? (100 / (overlaps.length + 1)) : 100
+                            const overlapIndex = hasOverlaps ? overlaps.findIndex(o => 
+                              o.startTime < entry.startTime || 
+                              (o.startTime === entry.startTime && o.id < entry.id)
+                            ) + 1 : 0
+                            
                             return (
                               <div
                                 key={index}
-                                className="absolute left-2 right-2 rounded-md p-2 shadow-sm overflow-hidden group"
+                                className={`absolute rounded-md p-2 shadow-sm overflow-hidden group transition-all duration-200 hover:shadow-md ${isSelecting ? 'bg-opacity-75 backdrop-blur-[0.5px]' : ''}`}
                                 style={{
                                   top: `${startPosition}px`,
                                   height: `${duration}px`,
                                   backgroundColor: entry.color,
+                                  zIndex: isSelecting ? 1 : 2, // Base z-index
+                                  width: hasOverlaps ? `calc(${overlapWidth}% - 8px)` : 'calc(100% - 16px)',
+                                  left: hasOverlaps ? `calc(${overlapIndex * overlapWidth}% + 4px)` : '8px',
+                                  transition: 'z-index 0s, transform 0.2s, box-shadow 0.2s',
+                                }}
+                                onMouseEnter={(e) => {
+                                  // Set a higher z-index on hover
+                                  e.currentTarget.style.zIndex = '10';
+                                  e.currentTarget.style.transform = 'scale(1.02)';
+                                }}
+                                onMouseLeave={(e) => {
+                                  // Reset z-index when not hovering
+                                  e.currentTarget.style.zIndex = isSelecting ? '1' : '2';
+                                  e.currentTarget.style.transform = 'scale(1)';
                                 }}
                               >
                                 <div className="text-white text-sm font-medium truncate">{entry.title}</div>
@@ -728,7 +1168,9 @@ export default function AdminView() {
                                         <div className="grid gap-4 py-4">
                                           <div className="grid grid-cols-2 gap-4">
                                             <div className="space-y-2">
-                                              <Label htmlFor="edit-title">Title *</Label>
+                                              <Label htmlFor="edit-title" className="flex items-center">
+                                                Title <span className="text-red-500 ml-1">*</span>
+                                              </Label>
                                               <Input
                                                 id="edit-title"
                                                 value={editingEntry.title}
@@ -736,10 +1178,13 @@ export default function AdminView() {
                                                   setEditingEntry({ ...editingEntry, title: e.target.value })
                                                 }
                                                 required
+                                                className={!editingEntry.title ? "border-red-300 focus:border-red-500" : ""}
                                               />
                                             </div>
                                             <div className="space-y-2">
-                                              <Label htmlFor="edit-date">Date *</Label>
+                                              <Label htmlFor="edit-date" className="flex items-center">
+                                                Date <span className="text-red-500 ml-1">*</span>
+                                              </Label>
                                               <Input
                                                 id="edit-date"
                                                 type="date"
@@ -748,12 +1193,15 @@ export default function AdminView() {
                                                   setEditingEntry({ ...editingEntry, date: e.target.value })
                                                 }
                                                 required
+                                                className={!editingEntry.date ? "border-red-300 focus:border-red-500" : ""}
                                               />
                                             </div>
                                           </div>
                                           <div className="grid grid-cols-2 gap-4">
                                             <div className="space-y-2">
-                                              <Label htmlFor="edit-start-time">Start Time *</Label>
+                                              <Label htmlFor="edit-start-time" className="flex items-center">
+                                                Start Time <span className="text-red-500 ml-1">*</span>
+                                              </Label>
                                               <Input
                                                 id="edit-start-time"
                                                 type="time"
@@ -762,10 +1210,13 @@ export default function AdminView() {
                                                   setEditingEntry({ ...editingEntry, startTime: e.target.value })
                                                 }
                                                 required
+                                                className={!editingEntry.startTime ? "border-red-300 focus:border-red-500" : ""}
                                               />
                                             </div>
                                             <div className="space-y-2">
-                                              <Label htmlFor="edit-end-time">End Time *</Label>
+                                              <Label htmlFor="edit-end-time" className="flex items-center">
+                                                End Time <span className="text-red-500 ml-1">*</span>
+                                              </Label>
                                               <Input
                                                 id="edit-end-time"
                                                 type="time"
@@ -774,6 +1225,7 @@ export default function AdminView() {
                                                   setEditingEntry({ ...editingEntry, endTime: e.target.value })
                                                 }
                                                 required
+                                                className={!editingEntry.endTime ? "border-red-300 focus:border-red-500" : ""}
                                               />
                                             </div>
                                           </div>
@@ -782,9 +1234,11 @@ export default function AdminView() {
                                               <Label htmlFor="edit-type">Meeting Type *</Label>
                                               <Select
                                                 value={editingEntry.type}
-                                                onValueChange={(value) =>
-                                                  setEditingEntry({ ...editingEntry, type: value })
-                                                }
+                                                onValueChange={(value) => {
+                                                  // Set default color based on meeting type if color hasn't been manually changed
+                                                  const defaultColor = meetingTypeColors[value as keyof typeof meetingTypeColors] || "#4f46e5";
+                                                  setEditingEntry({ ...editingEntry, type: value, color: defaultColor });
+                                                }}
                                               >
                                                 <SelectTrigger id="edit-type">
                                                   <SelectValue placeholder="Select type" />
@@ -820,23 +1274,37 @@ export default function AdminView() {
                                           </div>
                                           <div className="space-y-2">
                                             <Label htmlFor="edit-color">Color</Label>
-                                            <div className="flex gap-2">
-                                              <Input
-                                                id="edit-color"
-                                                type="color"
-                                                value={editingEntry.color}
-                                                onChange={(e) =>
-                                                  setEditingEntry({ ...editingEntry, color: e.target.value })
-                                                }
-                                                className="w-12 h-10 p-1"
-                                              />
-                                              <Input
-                                                value={editingEntry.color}
-                                                onChange={(e) =>
-                                                  setEditingEntry({ ...editingEntry, color: e.target.value })
-                                                }
-                                                className="flex-1"
-                                              />
+                                            <div className="flex flex-col gap-2">
+                                              <div className="flex gap-2">
+                                                <Input
+                                                  id="edit-color"
+                                                  type="color"
+                                                  value={editingEntry.color}
+                                                  onChange={(e) =>
+                                                    setEditingEntry({ ...editingEntry, color: e.target.value })
+                                                  }
+                                                  className="w-12 h-10 p-1"
+                                                />
+                                                <Input
+                                                  value={editingEntry.color}
+                                                  onChange={(e) =>
+                                                    setEditingEntry({ ...editingEntry, color: e.target.value })
+                                                  }
+                                                  className="flex-1"
+                                                />
+                                              </div>
+                                              <div className="flex flex-wrap gap-2 mt-2">
+                                                {predefinedColors.map((color) => (
+                                                  <button
+                                                    key={color.value}
+                                                    type="button"
+                                                    className={`w-8 h-8 rounded-full border ${editingEntry.color === color.value ? 'ring-2 ring-offset-2 ring-blue-500' : 'border-gray-200'}`}
+                                                    style={{ backgroundColor: color.value }}
+                                                    title={color.name}
+                                                    onClick={() => setEditingEntry({ ...editingEntry, color: color.value })}
+                                                  />
+                                                ))}
+                                              </div>
                                             </div>
                                           </div>
                                           <div className="space-y-2">
@@ -880,8 +1348,19 @@ export default function AdminView() {
                                         >
                                           Cancel
                                         </Button>
-                                        <Button onClick={handleUpdateEntry} disabled={isSubmitting}>
-                                          {isSubmitting ? "Updating..." : "Update Entry"}
+                                        <Button 
+                                          onClick={handleUpdateEntry} 
+                                          disabled={isSubmitting}
+                                          className={isSubmitting ? "opacity-80" : ""}
+                                        >
+                                          {isSubmitting ? (
+                                            <>
+                                              <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                                              Updating...
+                                            </>
+                                          ) : (
+                                            "Update Entry"
+                                          )}
                                         </Button>
                                       </DialogFooter>
                                     </DialogContent>
@@ -890,7 +1369,7 @@ export default function AdminView() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-6 w-6 bg-white/20 hover:bg-white/30"
-                                    onClick={() => handleDeleteEntry(entry.id)}
+                                    onClick={() => confirmDelete(entry.id)}
                                   >
                                     <Trash2 className="h-3 w-3 text-white" />
                                   </Button>
@@ -972,14 +1451,212 @@ export default function AdminView() {
                                       <DialogTitle>Edit Schedule Entry</DialogTitle>
                                       <DialogDescription>Update the details of this schedule entry</DialogDescription>
                                     </DialogHeader>
-                                    {/* Edit form content is the same as above */}
+                                    {editingEntry && (
+                                      <div className="grid gap-4 py-4">
+                                        <div className="grid grid-cols-2 gap-4">
+                                          <div className="space-y-2">
+                                            <Label htmlFor="edit-title" className="flex items-center">
+                                              Title <span className="text-red-500 ml-1">*</span>
+                                            </Label>
+                                            <Input
+                                              id="edit-title"
+                                              value={editingEntry.title}
+                                              onChange={(e) =>
+                                                setEditingEntry({ ...editingEntry, title: e.target.value })
+                                              }
+                                              required
+                                              className={!editingEntry.title ? "border-red-300 focus:border-red-500" : ""}
+                                            />
+                                          </div>
+                                          <div className="space-y-2">
+                                            <Label htmlFor="edit-date" className="flex items-center">
+                                              Date <span className="text-red-500 ml-1">*</span>
+                                            </Label>
+                                            <Input
+                                              id="edit-date"
+                                              type="date"
+                                              value={editingEntry.date}
+                                              onChange={(e) =>
+                                                setEditingEntry({ ...editingEntry, date: e.target.value })
+                                              }
+                                              required
+                                              className={!editingEntry.date ? "border-red-300 focus:border-red-500" : ""}
+                                            />
+                                          </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                          <div className="space-y-2">
+                                            <Label htmlFor="edit-start-time" className="flex items-center">
+                                              Start Time <span className="text-red-500 ml-1">*</span>
+                                            </Label>
+                                            <Input
+                                              id="edit-start-time"
+                                              type="time"
+                                              value={editingEntry.startTime}
+                                              onChange={(e) =>
+                                                setEditingEntry({ ...editingEntry, startTime: e.target.value })
+                                              }
+                                              required
+                                              className={!editingEntry.startTime ? "border-red-300 focus:border-red-500" : ""}
+                                            />
+                                          </div>
+                                          <div className="space-y-2">
+                                            <Label htmlFor="edit-end-time" className="flex items-center">
+                                              End Time <span className="text-red-500 ml-1">*</span>
+                                            </Label>
+                                            <Input
+                                              id="edit-end-time"
+                                              type="time"
+                                              value={editingEntry.endTime}
+                                              onChange={(e) =>
+                                                setEditingEntry({ ...editingEntry, endTime: e.target.value })
+                                              }
+                                              required
+                                              className={!editingEntry.endTime ? "border-red-300 focus:border-red-500" : ""}
+                                            />
+                                          </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                          <div className="space-y-2">
+                                            <Label htmlFor="edit-type">Meeting Type *</Label>
+                                            <Select
+                                              value={editingEntry.type}
+                                              onValueChange={(value) => {
+                                                // Set default color based on meeting type if color hasn't been manually changed
+                                                const defaultColor = meetingTypeColors[value as keyof typeof meetingTypeColors] || "#4f46e5";
+                                                setEditingEntry({ ...editingEntry, type: value, color: defaultColor });
+                                              }}
+                                            >
+                                              <SelectTrigger id="edit-type">
+                                                <SelectValue placeholder="Select type" />
+                                              </SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="meeting">Meeting</SelectItem>
+                                                <SelectItem value="appointment">Appointment</SelectItem>
+                                                <SelectItem value="event">Event</SelectItem>
+                                                <SelectItem value="class">Class</SelectItem>
+                                                <SelectItem value="office-hours">Office Hours</SelectItem>
+                                                <SelectItem value="unavailable">Unavailable</SelectItem>
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                          <div className="space-y-2">
+                                            <Label htmlFor="edit-status">Status *</Label>
+                                            <Select
+                                              value={editingEntry.status}
+                                              onValueChange={(value) =>
+                                                setEditingEntry({ ...editingEntry, status: value })
+                                              }
+                                            >
+                                              <SelectTrigger id="edit-status">
+                                                <SelectValue placeholder="Select status" />
+                                              </SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="confirmed">Confirmed</SelectItem>
+                                                <SelectItem value="tentative">Tentative</SelectItem>
+                                                <SelectItem value="cancelled">Cancelled</SelectItem>
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                        </div>
+                                        <div className="space-y-2">
+                                          <Label htmlFor="edit-color">Color</Label>
+                                          <div className="flex flex-col gap-2">
+                                            <div className="flex gap-2">
+                                              <Input
+                                                id="edit-color"
+                                                type="color"
+                                                value={editingEntry.color}
+                                                onChange={(e) =>
+                                                  setEditingEntry({ ...editingEntry, color: e.target.value })
+                                                }
+                                                className="w-12 h-10 p-1"
+                                              />
+                                              <Input
+                                                value={editingEntry.color}
+                                                onChange={(e) =>
+                                                  setEditingEntry({ ...editingEntry, color: e.target.value })
+                                                }
+                                                className="flex-1"
+                                              />
+                                            </div>
+                                            <div className="flex flex-wrap gap-2 mt-2">
+                                              {predefinedColors.map((color) => (
+                                                <button
+                                                  key={color.value}
+                                                  type="button"
+                                                  className={`w-8 h-8 rounded-full border ${editingEntry.color === color.value ? 'ring-2 ring-offset-2 ring-blue-500' : 'border-gray-200'}`}
+                                                  style={{ backgroundColor: color.value }}
+                                                  title={color.name}
+                                                  onClick={() => setEditingEntry({ ...editingEntry, color: color.value })}
+                                                />
+                                              ))}
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div className="space-y-2">
+                                          <Label htmlFor="edit-meeting-with">Meeting With</Label>
+                                          <Input
+                                            id="edit-meeting-with"
+                                            value={editingEntry.meetingWith || ""}
+                                            onChange={(e) =>
+                                              setEditingEntry({ ...editingEntry, meetingWith: e.target.value })
+                                            }
+                                          />
+                                        </div>
+                                        <div className="space-y-2">
+                                          <Label htmlFor="edit-location">Location</Label>
+                                          <Input
+                                            id="edit-location"
+                                            value={editingEntry.location || ""}
+                                            onChange={(e) =>
+                                              setEditingEntry({ ...editingEntry, location: e.target.value })
+                                            }
+                                          />
+                                        </div>
+                                        <div className="space-y-2">
+                                          <Label htmlFor="edit-description">Description</Label>
+                                          <Textarea
+                                            id="edit-description"
+                                            value={editingEntry.description || ""}
+                                            onChange={(e) =>
+                                              setEditingEntry({ ...editingEntry, description: e.target.value })
+                                            }
+                                            rows={3}
+                                          />
+                                        </div>
+                                      </div>
+                                    )}
+                                    <DialogFooter>
+                                      <Button
+                                        variant="outline"
+                                        onClick={() => setEditingEntry(null)}
+                                        disabled={isSubmitting}
+                                      >
+                                        Cancel
+                                      </Button>
+                                      <Button 
+                                        onClick={handleUpdateEntry} 
+                                        disabled={isSubmitting}
+                                        className={isSubmitting ? "opacity-80" : ""}
+                                      >
+                                        {isSubmitting ? (
+                                          <>
+                                            <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                                            Updating...
+                                          </>
+                                        ) : (
+                                          "Update Entry"
+                                        )}
+                                      </Button>
+                                    </DialogFooter>
                                   </DialogContent>
                                 </Dialog>
                                 <Button
                                   variant="outline"
                                   size="icon"
                                   className="h-8 w-8"
-                                  onClick={() => handleDeleteEntry(entry.id)}
+                                  onClick={() => confirmDelete(entry.id)}
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
@@ -1000,6 +1677,29 @@ export default function AdminView() {
           </Tabs>
         </div>
       </div>
+      
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Confirm Deletion</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this schedule entry? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={() => entryToDelete && handleDeleteEntry(entryToDelete)}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

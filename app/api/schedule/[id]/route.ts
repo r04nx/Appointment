@@ -5,10 +5,12 @@ import { authOptions } from "@/lib/auth"
 
 // GET a specific schedule entry
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+  const id = params.id
+  
   try {
     const entry = await prisma.scheduleEntry.findUnique({
       where: {
-        id: params.id,
+        id,
       },
     })
 
@@ -25,6 +27,8 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
 // PUT (update) a schedule entry
 export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
+  const id = params.id
+  
   try {
     const session = await getServerSession(authOptions)
 
@@ -37,7 +41,7 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
     // Check if entry exists
     const existingEntry = await prisma.scheduleEntry.findUnique({
       where: {
-        id: params.id,
+        id,
       },
     })
 
@@ -48,7 +52,7 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
     // Update entry
     const updatedEntry = await prisma.scheduleEntry.update({
       where: {
-        id: params.id,
+        id,
       },
       data,
     })
@@ -62,6 +66,13 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
 
 // DELETE a schedule entry
 export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  // Ensure params is properly awaited and validated
+  if (!params || typeof params.id !== 'string') {
+    return NextResponse.json({ error: "Invalid ID parameter" }, { status: 400 })
+  }
+  
+  const id = params.id
+  
   try {
     const session = await getServerSession(authOptions)
 
@@ -72,7 +83,7 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
     // Check if entry exists
     const existingEntry = await prisma.scheduleEntry.findUnique({
       where: {
-        id: params.id,
+        id,
       },
     })
 
@@ -83,7 +94,7 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
     // Delete entry
     await prisma.scheduleEntry.delete({
       where: {
-        id: params.id,
+        id,
       },
     })
 
