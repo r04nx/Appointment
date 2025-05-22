@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { useSession, signOut } from "next-auth/react"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { LogOut, User, UserPlus, Edit, Trash2, Shield } from "lucide-react"
@@ -20,6 +20,8 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "@/components/ui/use-toast"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import AdminView from "@/components/admin-view"
 
 interface AdminUser {
   id: string
@@ -299,121 +301,142 @@ export default function SuperAdminDashboard() {
       </header>
 
       <main className="container mx-auto px-4 py-8 relative z-10">
-        <div className="space-y-6">
-          <div className="flex justify-between items-center">
-            <h2 className="text-2xl font-bold flex items-center gap-2">
-              <User className="h-6 w-6 text-blue-600" />
-              Admin User Management
-            </h2>
-            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-              <DialogTrigger asChild>
-                <Button className="bg-blue-600 hover:bg-blue-700">
-                  <UserPlus className="h-4 w-4 mr-2" />
-                  Add Admin User
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-[425px]">
-                <DialogHeader>
-                  <DialogTitle>Add Admin User</DialogTitle>
-                  <DialogDescription>Create a new admin user who can manage the principal's schedule</DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="username">Username *</Label>
-                    <Input
-                      id="username"
-                      value={newUser.username}
-                      onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
-                      placeholder="Username"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Password *</Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      value={newUser.password}
-                      onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                      placeholder="Password"
-                      required
-                    />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isSubmitting}>
-                    Cancel
-                  </Button>
-                  <Button onClick={handleAddUser} disabled={isSubmitting}>
-                    {isSubmitting ? "Adding..." : "Add User"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </div>
+        <Tabs defaultValue="userManagement" className="w-full">
+          <TabsList className="grid w-full grid-cols-2 mb-6">
+            <TabsTrigger value="userManagement">User Management</TabsTrigger>
+            <TabsTrigger value="scheduleManagement">Schedule Management</TabsTrigger>
+          </TabsList>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Admin Users</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {isLoading ? (
-                <div className="flex justify-center items-center h-[400px]">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700"></div>
-                </div>
-              ) : (
-                <ScrollArea className="h-[400px]">
-                  <div className="space-y-4">
-                    {users.length === 0 ? (
-                      <p className="text-center text-gray-500 py-8">No admin users found</p>
-                    ) : (
-                      users.map((user) => (
-                        <div
-                          key={user.id}
-                          className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50"
-                        >
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <User className="h-5 w-5 text-gray-500" />
-                              <span className="font-medium">{user.username}</span>
+          <TabsContent value="userManagement">
+            <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold flex items-center gap-2">
+                  <User className="h-6 w-6 text-blue-600" />
+                  Admin User Management
+                </h2>
+                <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="bg-blue-600 hover:bg-blue-700">
+                      <UserPlus className="h-4 w-4 mr-2" />
+                      Add Admin User
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-[425px]">
+                    <DialogHeader>
+                      <DialogTitle>Add Admin User</DialogTitle>
+                      <DialogDescription>Create a new admin user who can manage the principal's schedule</DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="username">Username *</Label>
+                        <Input
+                          id="username"
+                          value={newUser.username}
+                          onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                          placeholder="Username"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="password">Password *</Label>
+                        <Input
+                          id="password"
+                          type="password"
+                          value={newUser.password}
+                          onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                          placeholder="Password"
+                          required
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isSubmitting}>
+                        Cancel
+                      </Button>
+                      <Button onClick={handleAddUser} disabled={isSubmitting}>
+                        {isSubmitting ? "Adding..." : "Add User"}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Admin Users</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {isLoading ? (
+                    <div className="flex justify-center items-center h-[400px]">
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700"></div>
+                    </div>
+                  ) : (
+                    <ScrollArea className="h-[400px]">
+                      <div className="space-y-4">
+                        {users.length === 0 ? (
+                          <p className="text-center text-gray-500 py-8">No admin users found</p>
+                        ) : (
+                          users.map((user) => (
+                            <div
+                              key={user.id}
+                              className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50"
+                            >
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <User className="h-5 w-5 text-gray-500" />
+                                  <span className="font-medium">{user.username}</span>
+                                </div>
+                                <span className="text-sm text-gray-500">Role: {user.role}</span>
+                              </div>
+                              {user.role !== "superadmin" && (
+                                <div className="flex gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleResetPassword(user.id)}
+                                    className="text-xs"
+                                  >
+                                    Reset Password
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="icon"
+                                    onClick={() => setEditingUser(user)}
+                                  >
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="destructive"
+                                    size="icon"
+                                    onClick={() => handleDeleteUser(user.id)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              )}
                             </div>
-                            <span className="text-sm text-gray-500">Role: {user.role}</span>
-                          </div>
-                          {user.role !== "superadmin" && (
-                            <div className="flex gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleResetPassword(user.id)}
-                                className="text-xs"
-                              >
-                                Reset Password
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="icon"
-                                onClick={() => setEditingUser(user)}
-                              >
-                                <Edit className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="destructive"
-                                size="icon"
-                                onClick={() => handleDeleteUser(user.id)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </ScrollArea>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+                          ))
+                        )}
+                      </div>
+                    </ScrollArea>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+          
+          <TabsContent value="scheduleManagement">
+            <Card>
+              <CardHeader>
+                <CardTitle>Schedule Management</CardTitle>
+                <CardDescription>View and manage all schedules across different rooms. Approve pending entries as superadmin.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <AdminView /> {/* AdminView will use its own session checking for role-specific UI */}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </main>
 
       {/* Edit User Dialog */}

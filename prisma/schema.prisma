@@ -27,6 +27,8 @@ model ScheduleEntry {
   status      String
   color       String
   meetingWith String?
+  approved    Boolean? @default(true)
+  room        String
   location    String?
   description String?
   createdAt   DateTime @default(now())
