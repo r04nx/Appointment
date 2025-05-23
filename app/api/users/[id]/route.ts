@@ -24,6 +24,10 @@ export async function GET(
         id: true,
         username: true,
         role: true,
+        canManageAuditorium: true,
+        canManageConferenceHall: true,
+        canEditPrincipalSchedule: true,
+        canManageDynamicEntities: true,
       },
     })
 
@@ -52,7 +56,15 @@ export async function PUT(
   }
 
   try {
-    const { username, password, role } = await req.json()
+    const { 
+      username, 
+      password, 
+      role,
+      canManageAuditorium,
+      canManageConferenceHall,
+      canEditPrincipalSchedule,
+      canManageDynamicEntities
+    } = await req.json()
 
     // Check if user exists
     const existingUser = await prisma.user.findUnique({
@@ -79,6 +91,12 @@ export async function PUT(
     if (password) updateData.password = await hash(password, 12)
     if (role) updateData.role = role
 
+    // Add new permissions, explicitly checking for boolean to allow setting to false
+    if (typeof canManageAuditorium === 'boolean') updateData.canManageAuditorium = canManageAuditorium;
+    if (typeof canManageConferenceHall === 'boolean') updateData.canManageConferenceHall = canManageConferenceHall;
+    if (typeof canEditPrincipalSchedule === 'boolean') updateData.canEditPrincipalSchedule = canEditPrincipalSchedule;
+    if (typeof canManageDynamicEntities === 'boolean') updateData.canManageDynamicEntities = canManageDynamicEntities;
+
     // Update user
     const updatedUser = await prisma.user.update({
       where: { id },
@@ -87,6 +105,10 @@ export async function PUT(
         id: true,
         username: true,
         role: true,
+        canManageAuditorium: true,
+        canManageConferenceHall: true,
+        canEditPrincipalSchedule: true,
+        canManageDynamicEntities: true,
       },
     })
 

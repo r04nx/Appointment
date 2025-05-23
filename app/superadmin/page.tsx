@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { LogOut, User, UserPlus, Edit, Trash2, Shield } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { LogOut, User, UserPlus, Edit, Trash2, Shield, ListPlus, Building } from "lucide-react" // Added ListPlus, Building
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,20 @@ interface AdminUser {
   id: string
   username: string
   role: string
+  canManageAuditorium?: boolean
+  canManageConferenceHall?: boolean
+  canEditPrincipalSchedule?: boolean
+  canManageDynamicEntities?: boolean
+}
+
+interface DynamicEntity {
+  id: string;
+  name: string;
+  entityTypeLabel: string;
+  managerId?: string | null;
+  manager?: { username: string }; // For display
+  // createdAt?: string; // Optional: if you plan to display it
+  // updatedAt?: string; // Optional: if you plan to display it
 }
 
 export default function SuperAdminDashboard() {
@@ -44,6 +59,18 @@ export default function SuperAdminDashboard() {
     role: "admin",
   })
 
+  // State for Dynamic Entities
+  const [dynamicEntities, setDynamicEntities] = useState<DynamicEntity[]>([])
+  const [isLoadingDynamicEntities, setIsLoadingDynamicEntities] = useState(true)
+  const [isDynamicEntityDialogOpen, setIsDynamicEntityDialogOpen] = useState(false)
+  const [editingDynamicEntity, setEditingDynamicEntity] = useState<DynamicEntity | null>(null)
+  const [newDynamicEntity, setNewDynamicEntity] = useState<{name: string; entityTypeLabel: string; managerId: string | null;}>({ // Ensure managerId can be null
+    name: "",
+    entityTypeLabel: "",
+    managerId: null, // Default to null for "No Manager"
+  })
+  const [entityToDeleteId, setEntityToDeleteId] = useState<string | null>(null); // For delete confirmation
+
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/login")
@@ -53,6 +80,7 @@ export default function SuperAdminDashboard() {
       } else {
         setIsLoaded(true)
         fetchUsers()
+        fetchDynamicEntities() // Fetch dynamic entities on load
       }
     }
   }, [status, router, session])
@@ -77,6 +105,115 @@ export default function SuperAdminDashboard() {
       setIsLoading(false)
     }
   }
+
+  // CRUD functions for Dynamic Entities
+  const fetchDynamicEntities = async () => {
+    setIsLoadingDynamicEntities(true);
+    try {
+      const response = await fetch("/api/dynamic-entities");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({})); // Catch if response is not JSON
+        throw new Error(errorData.error || "Failed to fetch dynamic entities");
+      }
+      const data = await response.json();
+      setDynamicEntities(data);
+    } catch (error) {
+      console.error("Error fetching dynamic entities:", error);
+      toast({
+        title: "Error",
+        description: (error as Error).message || "Failed to load dynamic entities.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingDynamicEntities(false);
+    }
+  };
+
+  const handleAddDynamicEntity = async () => {
+    if (!newDynamicEntity.name || !newDynamicEntity.entityTypeLabel) {
+      toast({ title: "Validation Error", description: "Name and Type Label are required.", variant: "destructive" });
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const response = await fetch("/api/dynamic-entities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newDynamicEntity.name,
+          entityTypeLabel: newDynamicEntity.entityTypeLabel,
+          managerId: newDynamicEntity.managerId || null, // Ensure null is sent if empty
+        }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to create dynamic entity");
+      }
+      await fetchDynamicEntities(); // Refresh list
+      toast({ title: "Success", description: "Dynamic entity created successfully." });
+      setIsDynamicEntityDialogOpen(false);
+      setNewDynamicEntity({ name: "", entityTypeLabel: "", managerId: null });
+    } catch (error) {
+      console.error("Error creating dynamic entity:", error);
+      toast({ title: "Error", description: (error as Error).message || "Failed to create dynamic entity.", variant: "destructive" });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleUpdateDynamicEntity = async () => {
+    if (!editingDynamicEntity || !newDynamicEntity.name || !newDynamicEntity.entityTypeLabel) {
+       toast({ title: "Validation Error", description: "Name and Type Label are required.", variant: "destructive" });
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`/api/dynamic-entities/${editingDynamicEntity.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newDynamicEntity.name, // Use newDynamicEntity as form state
+          entityTypeLabel: newDynamicEntity.entityTypeLabel,
+          managerId: newDynamicEntity.managerId || null,
+        }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to update dynamic entity");
+      }
+      await fetchDynamicEntities(); // Refresh list
+      toast({ title: "Success", description: "Dynamic entity updated successfully." });
+      setIsDynamicEntityDialogOpen(false);
+      setEditingDynamicEntity(null);
+    } catch (error) {
+      console.error("Error updating dynamic entity:", error);
+      toast({ title: "Error", description: (error as Error).message || "Failed to update dynamic entity.", variant: "destructive" });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+  
+  const confirmDeleteDynamicEntity = async () => {
+    if (!entityToDeleteId) return;
+    setIsSubmitting(true); // Use general isSubmitting or a specific one for delete
+    try {
+      const response = await fetch(`/api/dynamic-entities/${entityToDeleteId}`, {
+        method: "DELETE",
+      });
+      if (!response.ok && response.status !== 204) { // 204 is a success for DELETE
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to delete dynamic entity");
+      }
+      await fetchDynamicEntities(); // Refresh list
+      toast({ title: "Success", description: "Dynamic entity deleted successfully." });
+    } catch (error) {
+      console.error("Error deleting dynamic entity:", error);
+      toast({ title: "Error", description: (error as Error).message || "Failed to delete dynamic entity.", variant: "destructive" });
+    } finally {
+      setEntityToDeleteId(null); // Close confirmation dialog
+      setIsSubmitting(false);
+    }
+  };
 
   const handleAddUser = async () => {
     if (!newUser.username || !newUser.password) {
@@ -148,6 +285,10 @@ export default function SuperAdminDashboard() {
         body: JSON.stringify({
           username: editingUser.username,
           role: editingUser.role,
+          canManageAuditorium: editingUser.canManageAuditorium,
+          canManageConferenceHall: editingUser.canManageConferenceHall,
+          canEditPrincipalSchedule: editingUser.canEditPrincipalSchedule,
+          canManageDynamicEntities: editingUser.canManageDynamicEntities,
         }),
       })
 
@@ -302,9 +443,10 @@ export default function SuperAdminDashboard() {
 
       <main className="container mx-auto px-4 py-8 relative z-10">
         <Tabs defaultValue="userManagement" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 mb-6">
+          <TabsList className="grid w-full grid-cols-3 mb-6"> {/* Updated to grid-cols-3 */}
             <TabsTrigger value="userManagement">User Management</TabsTrigger>
             <TabsTrigger value="scheduleManagement">Schedule Management</TabsTrigger>
+            <TabsTrigger value="dynamicEntityManagement">Dynamic Entities</TabsTrigger> {/* New Trigger */}
           </TabsList>
 
           <TabsContent value="userManagement">
@@ -436,6 +578,94 @@ export default function SuperAdminDashboard() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="dynamicEntityManagement">
+            <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold flex items-center gap-2">
+                  <Building className="h-6 w-6 text-blue-600" />
+                  Dynamic Entity Management
+                </h2>
+                <Button 
+                  className="bg-green-600 hover:bg-green-700"
+                  onClick={() => {
+                    setEditingDynamicEntity(null); // Clear any editing state
+                    setNewDynamicEntity({ name: "", entityTypeLabel: "", managerId: "" }); // Reset form
+                    setIsDynamicEntityDialogOpen(true);
+                  }}
+                >
+                  <ListPlus className="h-4 w-4 mr-2" />
+                  Add Dynamic Entity
+                </Button>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Registered Dynamic Entities</CardTitle>
+                  <CardDescription>Manage custom entities like special rooms, VIPs, or resources.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {isLoadingDynamicEntities ? (
+                    <div className="flex justify-center items-center h-[200px]">
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-700"></div>
+                    </div>
+                  ) : (
+                    <ScrollArea className="h-[400px]">
+                      {dynamicEntities.length === 0 ? (
+                        <p className="text-center text-gray-500 py-8">No dynamic entities found. Add one to get started.</p>
+                      ) : (
+                        <div className="space-y-4">
+                          {dynamicEntities.map((entity) => (
+                            <div
+                              key={entity.id}
+                              className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50"
+                            >
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <Building className="h-5 w-5 text-gray-500" />
+                                  <span className="font-medium">{entity.name}</span>
+                                  <Badge variant="outline">{entity.entityTypeLabel}</Badge>
+                                </div>
+                                <span className="text-sm text-gray-500 ml-7">
+                                  Managed by: {entity.manager?.username || "N/A"}
+                                </span>
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => {
+                                    setEditingDynamicEntity(entity);
+                                    setEditingDynamicEntity(entity); // Set the entity being edited
+                                    // Pre-fill form state (newDynamicEntity) with the selected entity's data
+                                    setNewDynamicEntity({ 
+                                      name: entity.name,
+                                      entityTypeLabel: entity.entityTypeLabel,
+                                      managerId: entity.managerId || null, 
+                                    });
+                                    setIsDynamicEntityDialogOpen(true);
+                                  }}
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="destructive"
+                                  size="icon"
+                                  onClick={() => setEntityToDeleteId(entity.id)} // Open delete confirmation
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </ScrollArea>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
         </Tabs>
       </main>
 
@@ -457,6 +687,65 @@ export default function SuperAdminDashboard() {
                   placeholder="Username"
                 />
               </div>
+              <div className="space-y-2">
+                <Label>Permissions</Label>
+                <div className="space-y-2 rounded-md border p-4">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="edit-canManageAuditorium"
+                      checked={editingUser.canManageAuditorium || false}
+                      onCheckedChange={(checked) =>
+                        setEditingUser({ ...editingUser, canManageAuditorium: !!checked })
+                      }
+                      disabled={editingUser.role === 'superadmin' || session?.user?.id === editingUser.id}
+                    />
+                    <Label htmlFor="edit-canManageAuditorium" className="font-normal">Can Manage Auditorium</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="edit-canManageConferenceHall"
+                      checked={editingUser.canManageConferenceHall || false}
+                      onCheckedChange={(checked) =>
+                        setEditingUser({ ...editingUser, canManageConferenceHall: !!checked })
+                      }
+                      disabled={editingUser.role === 'superadmin' || session?.user?.id === editingUser.id}
+                    />
+                    <Label htmlFor="edit-canManageConferenceHall" className="font-normal">Can Manage Conference Hall</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="edit-canEditPrincipalSchedule"
+                      checked={editingUser.canEditPrincipalSchedule || false}
+                      onCheckedChange={(checked) =>
+                        setEditingUser({ ...editingUser, canEditPrincipalSchedule: !!checked })
+                      }
+                      disabled={editingUser.role === 'superadmin' || session?.user?.id === editingUser.id}
+                    />
+                    <Label htmlFor="edit-canEditPrincipalSchedule" className="font-normal">Can Edit Principal's Schedule</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="edit-canManageDynamicEntities"
+                      checked={editingUser.canManageDynamicEntities || false}
+                      onCheckedChange={(checked) =>
+                        setEditingUser({ ...editingUser, canManageDynamicEntities: !!checked })
+                      }
+                      disabled={editingUser.role === 'superadmin' || session?.user?.id === editingUser.id}
+                    />
+                    <Label htmlFor="edit-canManageDynamicEntities" className="font-normal">Can Manage Dynamic Entities</Label>
+                  </div>
+                   {editingUser.role === 'superadmin' && (
+                    <p className="text-xs text-muted-foreground pt-2">
+                      Superadmin permissions cannot be modified.
+                    </p>
+                  )}
+                   {session?.user?.id === editingUser.id && editingUser.role !== 'superadmin' && (
+                     <p className="text-xs text-muted-foreground pt-2">
+                      You cannot modify your own permissions here.
+                    </p>
+                   )}
+                </div>
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditingUser(null)} disabled={isSubmitting}>
@@ -469,6 +758,98 @@ export default function SuperAdminDashboard() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Add/Edit Dynamic Entity Dialog */}
+      <Dialog open={isDynamicEntityDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          setEditingDynamicEntity(null);
+          setNewDynamicEntity({ name: "", entityTypeLabel: "", managerId: null }); // Reset with null
+        }
+        setIsDynamicEntityDialogOpen(open);
+      }}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>{editingDynamicEntity ? "Edit Dynamic Entity" : "Add Dynamic Entity"}</DialogTitle>
+            <DialogDescription>
+              {editingDynamicEntity ? "Update the details of this dynamic entity." : "Create a new dynamic entity to be scheduled."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="de-name">Name *</Label>
+              <Input
+                id="de-name"
+                value={newDynamicEntity.name} // Form bound to newDynamicEntity
+                onChange={(e) => setNewDynamicEntity({ ...newDynamicEntity, name: e.target.value })}
+                placeholder="e.g., VIP Guest Room Alpha, Project Phoenix"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="de-typeLabel">Type Label *</Label>
+              <Input
+                id="de-typeLabel"
+                value={newDynamicEntity.entityTypeLabel} // Form bound to newDynamicEntity
+                onChange={(e) => setNewDynamicEntity({ ...newDynamicEntity, entityTypeLabel: e.target.value })}
+                placeholder="e.g., VIP Room, Focus Group, Resource"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="de-manager">Manager (Optional)</Label>
+              <Select
+                value={newDynamicEntity.managerId || ""} // Handle null for Select value
+                onValueChange={(value) =>
+                  setNewDynamicEntity({ ...newDynamicEntity, managerId: value === "none" ? null : value })
+                }
+              >
+                <SelectTrigger id="de-manager">
+                  <SelectValue placeholder="Select a manager" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No Manager</SelectItem>
+                  {users.filter(u => u.role !== 'superadmin').map(user => (
+                    <SelectItem key={user.id} value={user.id}>
+                      {user.username} ({user.role})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDynamicEntityDialogOpen(false)} disabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={editingDynamicEntity ? handleUpdateDynamicEntity : handleAddDynamicEntity} 
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (editingDynamicEntity ? "Updating..." : "Adding...") : (editingDynamicEntity ? "Save Changes" : "Add Entity")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Dynamic Entity Confirmation Dialog */}
+      <AlertDialog open={!!entityToDeleteId} onOpenChange={(open) => !open && setEntityToDeleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Deletion</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this dynamic entity? This action cannot be undone. 
+              Associated schedule entries will have their dynamic entity link removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setEntityToDeleteId(null)} disabled={isSubmitting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDeleteDynamicEntity} disabled={isSubmitting} className="bg-red-600 hover:bg-red-700">
+              {isSubmitting ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
 
       <footer className="bg-gray-800 text-white mt-10 relative z-10">
         <div className="container mx-auto px-4 py-4 text-center text-gray-400 text-sm">

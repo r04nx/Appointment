@@ -14,7 +14,13 @@ model User {
   id       String @id @default(cuid())
   username String @unique
   password String
-  role     String @default("admin")
+  role     String @default("admin") // Existing field
+  canManageAuditorium     Boolean   @default(false)
+  canManageConferenceHall Boolean   @default(false)
+  canEditPrincipalSchedule Boolean  @default(false)
+  canManageDynamicEntities Boolean @default(false)
+  // Potentially add relation to DynamicEntity if a user can manage multiple entities
+  managedEntities         DynamicEntity[] @relation("ManagedBy")
 }
 
 model ScheduleEntry {
@@ -24,14 +30,30 @@ model ScheduleEntry {
   startTime   String
   endTime     String
   type        String
-  status      String
+  status      String // Keep for event status (Confirmed, Tentative etc.)
   color       String
   meetingWith String?
-  approved    Boolean? @default(true)
-  room        String
-  location    String?
+  // 'room' for predefined rooms like Principal's Office, Auditorium, Conference Hall
+  room        String? // Make optional if an entry can be for a dynamic entity instead
+  location    String?  // Specific location details (optional)
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  isDynamicEntry Boolean @default(false)
+  dynamicEntityId String? // Will point to DynamicEntity.id
+  dynamicEntity   DynamicEntity? @relation(fields: [dynamicEntityId], references: [id], onDelete: SetNull) // Add onDelete: SetNull
+}
+
+model DynamicEntity {
+  id              String    @id @default(cuid())
+  name            String    // E.g., "VIP Guest Room", "Project Alpha Team"
+  entityTypeLabel String    // E.g., "Room", "VIP", "Resource", "Focus Group"
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  managerId       String?   // Optional: ID of the User who manages this entity
+  manager         User?     @relation("ManagedBy", fields: [managerId], references: [id])
+  scheduleEntries ScheduleEntry[] // Relation to schedule entries for this dynamic entity
 }
 

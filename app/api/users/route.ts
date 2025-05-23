@@ -19,6 +19,10 @@ export async function GET(req: NextRequest) {
         id: true,
         username: true,
         role: true,
+        canManageAuditorium: true,
+        canManageConferenceHall: true,
+        canEditPrincipalSchedule: true,
+        canManageDynamicEntities: true,
       },
     })
     return NextResponse.json(users)
