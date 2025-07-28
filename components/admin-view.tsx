@@ -24,8 +24,9 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { formatDate } from "@/lib/utils"
-import type { ScheduleEntry } from "@/lib/types"
+import type { ScheduleEntry } from "@/lib/types" // Assumed to have room and approved
 import { toast } from "@/components/ui/use-toast"
+import { useSession } from "next-auth/react" // Added for role-based UI
 
 // Interface for validation
 interface ValidatableScheduleEntry {
@@ -40,7 +41,13 @@ interface ValidatableScheduleEntry {
   meetingWith?: string
   location?: string
   description?: string
+  room?: string // Added room
+  approved?: boolean // Added approved
 }
+
+// Room options
+const availableRooms = ["Principal's Office", "Conference Hall", "Auditorium"] as const;
+type RoomType = typeof availableRooms[number];
 
 // Predefined colors for schedule entries
 const predefinedColors = [
@@ -74,9 +81,11 @@ export default function AdminView() {
   const [isSelecting, setIsSelecting] = useState(false)
   const [meetingType, setMeetingType] = useState<string>("all")
   const [timeRange, setTimeRange] = useState<string>("all")
+  const { data: session } = useSession(); // Get session data for role-based UI
   const [editingEntry, setEditingEntry] = useState<ScheduleEntry | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [currentRoomFilter, setCurrentRoomFilter] = useState<RoomType | "all">("Principal's Office"); // Default room
 
   // New entry form state
   const [newEntry, setNewEntry] = useState<Partial<ScheduleEntry>>({
@@ -88,8 +97,10 @@ export default function AdminView() {
     status: "confirmed",
     color: "#4f46e5",
     meetingWith: "",
-    location: "",
+    location: "", // Specific location (optional)
     description: "",
+    room: "Principal's Office", // Default room
+    approved: true, // Default approved status
   })
   
   // Update newEntry date when calendar date changes
@@ -106,19 +117,29 @@ export default function AdminView() {
 
   // Fetch schedule data
   useEffect(() => {
-    const fetchScheduleData = async () => {
+    // Renaming to avoid conflict with global fetch
+    const fetchScheduleDataForComponent = async () => {
       setIsLoading(true)
       try {
         let url = "/api/schedule"
+        const params = new URLSearchParams()
+
         if (date) {
-          // Format date without timezone conversion to prevent date shift
           const year = date.getFullYear();
           const month = String(date.getMonth() + 1).padStart(2, '0');
           const day = String(date.getDate()).padStart(2, '0');
           const formattedDate = `${year}-${month}-${day}`;
-          url += `?date=${formattedDate}`
+          params.append("date", formattedDate)
         }
 
+        if (currentRoomFilter && currentRoomFilter !== "all") {
+          params.append("room", currentRoomFilter)
+        }
+
+        if (params.toString()) {
+          url += `?${params.toString()}`
+        }
+        
         const response = await fetch(url)
         if (!response.ok) {
           throw new Error("Failed to fetch schedule data")
@@ -140,13 +161,12 @@ export default function AdminView() {
       }
     }
 
-    fetchScheduleData()
-  }, [date])
+    fetchScheduleDataForComponent()
+  }, [date, currentRoomFilter])
 
-  // Filter schedule data based on selected filters
+  // Filter schedule data based on selected filters (client-side, after API fetch)
   const filteredSchedule = scheduleData.filter((entry) => {
-    // Don't filter by date since we're already fetching by date from the API
-    // The API query already includes the date parameter
+    // API handles date and room filtering. Client-side filters are for type and time range.
     const meetingTypeMatch = meetingType === "all" || entry.type === meetingType
 
     let timeRangeMatch = true
@@ -203,6 +223,7 @@ export default function AdminView() {
     if (!entry.endTime) errors.push("End time is required")
     if (!entry.type) errors.push("Meeting type is required")
     if (!entry.status) errors.push("Status is required")
+    if (!entry.room) errors.push("Room is required") 
     
     // Check time logic
     if (entry.startTime && entry.endTime) {
@@ -292,7 +313,8 @@ export default function AdminView() {
         throw new Error("Failed to create schedule entry")
       }
 
-      const createdEntry = await response.json()
+      const responseData = await response.json() // API returns { message: string, entry: ScheduleEntry }
+      const createdEntry = responseData.entry;
 
       // Reset form
       const currentDate = date || new Date();
@@ -310,32 +332,25 @@ export default function AdminView() {
         status: "confirmed",
         color: "#4f46e5",
         meetingWith: "",
-        location: "",
+        location: "", // Specific location
         description: "",
+        room: "Principal's Office", // Reset room to default
+        approved: true, // Reset approved status
       })
 
       setIsDialogOpen(false)
 
-      // Fetch updated schedule data to refresh the calendar
-      // Use the date from newEntry for the API call
-      const entryDate = newEntry.date
-      const fetchUrl = `/api/schedule?date=${entryDate}`
-      const refreshResponse = await fetch(fetchUrl)
-      
-      if (refreshResponse.ok) {
-        const refreshedData = await refreshResponse.json()
-        setScheduleData(refreshedData)
-      } else {
-        // If refresh fails, at least update local state with the new entry
-        setScheduleData((prev) => [...prev, createdEntry])
-      }
+      // Refresh data for the current view to get the latest state from the server
+      await fetchScheduleDataForComponent(); 
 
       toast({
-        title: "Success",
-        description: "Schedule entry created successfully",
-      })
+        title: responseData.message ? "Server Notification" : "Success",
+        description: responseData.message || (createdEntry.approved === false ? "Entry created, pending approval due to conflict." : "Schedule entry created successfully."),
+      });
     } catch (error) {
       console.error("Error creating schedule entry:", error)
+      // Ensure createdEntry is defined before trying to access its properties
+      const entryDetails = newEntry ? `${newEntry.title} on ${newEntry.date}` : "entry";
       toast({
         title: "Error",
         description: "Failed to create schedule entry. Please try again.",
@@ -400,29 +415,22 @@ export default function AdminView() {
         throw new Error("Failed to update schedule entry")
       }
 
-      const updatedEntry = await response.json()
+      const responseData = await response.json(); // API returns { message: string, entry: ScheduleEntry }
+      const updatedEntry = responseData.entry;
       
-      // Fetch updated schedule data to refresh the calendar
-      const formattedDate = editingEntry.date
-      const fetchUrl = `/api/schedule?date=${formattedDate}`
-      const refreshResponse = await fetch(fetchUrl)
-      
-      if (refreshResponse.ok) {
-        const refreshedData = await refreshResponse.json()
-        setScheduleData(refreshedData)
-      } else {
-        // If refresh fails, at least update local state with the updated entry
-        setScheduleData((prev) => prev.map((entry) => (entry.id === updatedEntry.id ? updatedEntry : entry)))
-      }
+      // Refresh data for the current view to get the latest state from the server
+      await fetchScheduleDataForComponent();
 
       setEditingEntry(null)
 
       toast({
-        title: "Success",
-        description: "Schedule entry updated successfully",
-      })
+        title: responseData.message ? "Server Notification" : "Success",
+        description: responseData.message || (updatedEntry.approved === false ? "Entry updated, pending approval due to conflict." : "Schedule entry updated successfully."),
+      });
     } catch (error) {
       console.error("Error updating schedule entry:", error)
+      // Ensure updatedEntry is defined before trying to access its properties
+      const entryDetails = editingEntry ? `${editingEntry.title} on ${editingEntry.date}` : "entry";
       toast({
         title: "Error",
         description: "Failed to update schedule entry. Please try again.",
@@ -489,12 +497,17 @@ export default function AdminView() {
     }
   }
 
-  // Check if a time slot overlaps with existing entries
-  const checkOverlap = (startTime: string, endTime: string, date: string) => {
-    // Filter schedule entries for the current date
-    const entriesForDate = scheduleData.filter(entry => entry.date === date)
+  // Check if a time slot overlaps with existing entries for a specific room and date
+  const checkOverlap = (startTime: string, endTime: string, date: string, room: string, entryIdToExclude?: string) => {
+    // Filter schedule entries for the current date and room, excluding a specific entry if ID provided
+    const entriesForDateAndRoom = scheduleData.filter(entry => 
+      entry.date === date && 
+      entry.room === room &&
+      entry.approved === true && // Only consider approved entries for overlap
+      (!entryIdToExclude || entry.id !== entryIdToExclude)
+    )
     
-    if (entriesForDate.length === 0) return { overlaps: false }
+    if (entriesForDateAndRoom.length === 0) return { overlaps: false }
     
     // Convert times to minutes for easier comparison
     const convertToMinutes = (time: string) => {
@@ -565,9 +578,12 @@ export default function AdminView() {
     const month = String(currentDate.getMonth() + 1).padStart(2, '0')
     const day = String(currentDate.getDate()).padStart(2, '0')
     const formattedDate = `${year}-${month}-${day}`
+
+    // Determine the room for overlap check.
+    const roomForOverlapCheck = (currentRoomFilter && currentRoomFilter !== "all") ? currentRoomFilter : newEntry.room || "Principal's Office";
     
     // Check for overlaps with existing entries
-    const { overlaps, entries } = checkOverlap(startTime, endTime, formattedDate)
+    const { overlaps, entries } = checkOverlap(startTime, endTime, formattedDate, roomForOverlapCheck)
     
     if (overlaps) {
       // Store the overlapping entries and the pending entry
@@ -576,6 +592,7 @@ export default function AdminView() {
         date: formattedDate,
         startTime: startTime,
         endTime: endTime,
+        room: roomForOverlapCheck, // Include room in pending entry
       })
       
       // Show the overlap warning dialog
@@ -589,8 +606,10 @@ export default function AdminView() {
       date: formattedDate,
       startTime: startTime,
       endTime: endTime,
+      room: roomForOverlapCheck, 
+      approved: true, 
     }))
-
+      
     setIsDialogOpen(true)
     setIsSelecting(false)
     setSelectedTimeSlots([])
@@ -649,6 +668,33 @@ export default function AdminView() {
                       value={newEntry.date}
                       onChange={(e) => setNewEntry({ ...newEntry, date: e.target.value })}
                       required
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="room">Room *</Label>
+                    <Select
+                      value={newEntry.room}
+                      onValueChange={(value: RoomType) => setNewEntry({ ...newEntry, room: value })}
+                    >
+                      <SelectTrigger id="room">
+                        <SelectValue placeholder="Select room" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableRooms.map(roomName => (
+                          <SelectItem key={roomName} value={roomName}>{roomName}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                   <div className="space-y-2">
+                    <Label htmlFor="location">Specific Location (Optional)</Label>
+                    <Input
+                      id="location"
+                      value={newEntry.location}
+                      onChange={(e) => setNewEntry({ ...newEntry, location: e.target.value })}
+                      placeholder="e.g., Office, Lab A"
                     />
                   </div>
                 </div>
@@ -755,15 +801,7 @@ export default function AdminView() {
                     placeholder="Person or group name"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="location">Location</Label>
-                  <Input
-                    id="location"
-                    value={newEntry.location}
-                    onChange={(e) => setNewEntry({ ...newEntry, location: e.target.value })}
-                    placeholder="Meeting location"
-                  />
-                </div>
+                {/* Location field is now part of a grid with Room */}
                 <div className="space-y-2">
                   <Label htmlFor="description">Description</Label>
                   <Textarea
@@ -850,14 +888,14 @@ export default function AdminView() {
                     <div className="max-h-40 overflow-y-auto border rounded-md p-2">
                       {overlappingEntries.map((entry, index) => (
                         <div key={index} className="p-2 mb-2 bg-gray-50 rounded border-l-4" style={{ borderLeftColor: entry.color || '#4f46e5' }}>
-                          <p className="font-medium">{entry.title}</p>
+                          <p className="font-medium">{entry.title} ({entry.room})</p>
                           <p className="text-sm text-gray-500">{entry.startTime} - {entry.endTime}</p>
-                          <p className="text-xs text-gray-400">{entry.type}</p>
+                          <p className="text-xs text-gray-400">{entry.type} {entry.approved === false && <Badge variant="outline" className="ml-2 bg-yellow-100 text-yellow-700 border-yellow-300">Pending Approval</Badge>}</p>
                         </div>
                       ))}
                     </div>
                     
-                    <p>Do you still want to create a schedule entry during this time?</p>
+                    <p>Do you still want to create a schedule entry during this time? {session?.user?.role !== 'superadmin' && "(It may require approval if it conflicts)"}</p>
                   </div>
                 </AlertDialogDescription>
               </AlertDialogHeader>
@@ -882,6 +920,8 @@ export default function AdminView() {
                         date: pendingEntry.date,
                         startTime: pendingEntry.startTime,
                         endTime: pendingEntry.endTime,
+                        room: pendingEntry.room || "Principal's Office", // Use room from pendingEntry
+                        approved: true, // Default to true, API will handle if it needs to be false
                       }))
                       
                       setIsDialogOpen(true)
@@ -891,7 +931,7 @@ export default function AdminView() {
                       setOverlappingEntries([])
                     }
                   }}>
-                    Create Anyway
+                    {session?.user?.role === 'superadmin' ? "Create Anyway (Superadmin Override)" : "Create Anyway"}
                   </Button>
                 </AlertDialogAction>
               </AlertDialogFooter>
@@ -947,11 +987,11 @@ export default function AdminView() {
                     <div className="w-4 h-4 rounded-full" style={{ backgroundColor: color }}></div>
                     <span className="text-sm">
                       {type === "meeting" ? "Meeting" :
-                       type === "appointment" ? "Appointment" :
-                       type === "event" ? "Event" :
-                       type === "class" ? "Class" :
-                       type === "office-hours" ? "Office Hours" :
-                       type === "unavailable" ? "Unavailable" : type}
+                               type === "appointment" ? "Appointment" :
+                               type === "event" ? "Event" :
+                               type === "class" ? "Class" :
+                               type === "office-hours" ? "Office Hours" :
+                               type === "unavailable" ? "Unavailable" : type}
                     </span>
                   </div>
                 ))}
@@ -964,7 +1004,7 @@ export default function AdminView() {
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold flex items-center gap-2">
               <Clock className="h-5 w-5 text-blue-600" />
-              Principal's Schedule for {date ? formatDate(date) : "Today"}
+                      Schedule for {currentRoomFilter === "all" ? "All Rooms" : currentRoomFilter} on {date ? formatDate(date) : "Today"}
             </h2>
             <Sheet>
               <SheetTrigger asChild>
@@ -979,6 +1019,20 @@ export default function AdminView() {
                   <SheetDescription>Customize which schedule entries are displayed</SheetDescription>
                 </SheetHeader>
                 <div className="space-y-4 py-4">
+                           <div className="space-y-2">
+                            <Label htmlFor="room-filter">Room</Label>
+                            <Select value={currentRoomFilter} onValueChange={(value: RoomType | "all") => setCurrentRoomFilter(value)}>
+                              <SelectTrigger id="room-filter">
+                                <SelectValue placeholder="Select room" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">All Rooms</SelectItem>
+                                {availableRooms.map(roomName => (
+                                  <SelectItem key={roomName} value={roomName}>{roomName}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
                   <div className="space-y-2">
                     <Label htmlFor="meeting-type">Meeting Type</Label>
                     <Select value={meetingType} onValueChange={setMeetingType}>
@@ -1140,13 +1194,21 @@ export default function AdminView() {
                                   e.currentTarget.style.transform = 'scale(1)';
                                 }}
                               >
-                                <div className="text-white text-sm font-medium truncate">{entry.title}</div>
-                                <div className="text-white/80 text-xs truncate">
-                                  {entry.startTime} - {entry.endTime}
+                                <div className="flex justify-between items-start">
+                                  <div className="flex-grow">
+                                      <div className="text-white text-sm font-medium truncate">{entry.title}</div>
+                                      <div className="text-white/80 text-xs truncate">
+                                        {entry.startTime} - {entry.endTime} | {entry.room}
+                                      </div>
+                                      {entry.meetingWith && (
+                                        <div className="text-white/80 text-xs truncate mt-1">With: {entry.meetingWith}</div>
+                                      )}
+                                  </div>
+                                  {entry.approved === false && (
+                                      <Badge variant="outline" className="ml-1 mr-1 mt-0.5 text-xs bg-yellow-400 text-black border-yellow-500 shrink-0">Pending</Badge>
+                                  )}
                                 </div>
-                                {entry.meetingWith && (
-                                  <div className="text-white/80 text-xs truncate mt-1">With: {entry.meetingWith}</div>
-                                )}
+                                
                                 <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
                                   <Dialog>
                                     <DialogTrigger asChild>
@@ -1166,83 +1228,50 @@ export default function AdminView() {
                                       </DialogHeader>
                                       {editingEntry && (
                                         <div className="grid gap-4 py-4">
+                                          {/* Title and Date */}
                                           <div className="grid grid-cols-2 gap-4">
                                             <div className="space-y-2">
-                                              <Label htmlFor="edit-title" className="flex items-center">
-                                                Title <span className="text-red-500 ml-1">*</span>
-                                              </Label>
-                                              <Input
-                                                id="edit-title"
-                                                value={editingEntry.title}
-                                                onChange={(e) =>
-                                                  setEditingEntry({ ...editingEntry, title: e.target.value })
-                                                }
-                                                required
-                                                className={!editingEntry.title ? "border-red-300 focus:border-red-500" : ""}
-                                              />
+                                              <Label htmlFor="edit-title">Title *</Label>
+                                              <Input id="edit-title" value={editingEntry.title} onChange={(e) => setEditingEntry({ ...editingEntry, title: e.target.value })} required />
                                             </div>
                                             <div className="space-y-2">
-                                              <Label htmlFor="edit-date" className="flex items-center">
-                                                Date <span className="text-red-500 ml-1">*</span>
-                                              </Label>
-                                              <Input
-                                                id="edit-date"
-                                                type="date"
-                                                value={editingEntry.date}
-                                                onChange={(e) =>
-                                                  setEditingEntry({ ...editingEntry, date: e.target.value })
-                                                }
-                                                required
-                                                className={!editingEntry.date ? "border-red-300 focus:border-red-500" : ""}
-                                              />
+                                              <Label htmlFor="edit-date">Date *</Label>
+                                              <Input id="edit-date" type="date" value={editingEntry.date} onChange={(e) => setEditingEntry({ ...editingEntry, date: e.target.value })} required />
                                             </div>
                                           </div>
+                                          {/* Room and Specific Location */}
                                           <div className="grid grid-cols-2 gap-4">
                                             <div className="space-y-2">
-                                              <Label htmlFor="edit-start-time" className="flex items-center">
-                                                Start Time <span className="text-red-500 ml-1">*</span>
-                                              </Label>
-                                              <Input
-                                                id="edit-start-time"
-                                                type="time"
-                                                value={editingEntry.startTime}
-                                                onChange={(e) =>
-                                                  setEditingEntry({ ...editingEntry, startTime: e.target.value })
-                                                }
-                                                required
-                                                className={!editingEntry.startTime ? "border-red-300 focus:border-red-500" : ""}
-                                              />
+                                              <Label htmlFor="edit-room">Room *</Label>
+                                              <Select value={editingEntry.room} onValueChange={(value: RoomType) => setEditingEntry({ ...editingEntry, room: value })}>
+                                                <SelectTrigger id="edit-room"><SelectValue placeholder="Select room" /></SelectTrigger>
+                                                <SelectContent>
+                                                  {availableRooms.map(roomName => (<SelectItem key={roomName} value={roomName}>{roomName}</SelectItem>))}
+                                                </SelectContent>
+                                              </Select>
                                             </div>
                                             <div className="space-y-2">
-                                              <Label htmlFor="edit-end-time" className="flex items-center">
-                                                End Time <span className="text-red-500 ml-1">*</span>
-                                              </Label>
-                                              <Input
-                                                id="edit-end-time"
-                                                type="time"
-                                                value={editingEntry.endTime}
-                                                onChange={(e) =>
-                                                  setEditingEntry({ ...editingEntry, endTime: e.target.value })
-                                                }
-                                                required
-                                                className={!editingEntry.endTime ? "border-red-300 focus:border-red-500" : ""}
-                                              />
+                                              <Label htmlFor="edit-location">Specific Location (Optional)</Label>
+                                              <Input id="edit-location" value={editingEntry.location || ""} onChange={(e) => setEditingEntry({ ...editingEntry, location: e.target.value })} />
                                             </div>
                                           </div>
+                                          {/* Start Time and End Time */}
+                                          <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                              <Label htmlFor="edit-start-time">Start Time *</Label>
+                                              <Input id="edit-start-time" type="time" value={editingEntry.startTime} onChange={(e) => setEditingEntry({ ...editingEntry, startTime: e.target.value })} required />
+                                            </div>
+                                            <div className="space-y-2">
+                                              <Label htmlFor="edit-end-time">End Time *</Label>
+                                              <Input id="edit-end-time" type="time" value={editingEntry.endTime} onChange={(e) => setEditingEntry({ ...editingEntry, endTime: e.target.value })} required />
+                                            </div>
+                                          </div>
+                                          {/* Meeting Type and Status */}
                                           <div className="grid grid-cols-2 gap-4">
                                             <div className="space-y-2">
                                               <Label htmlFor="edit-type">Meeting Type *</Label>
-                                              <Select
-                                                value={editingEntry.type}
-                                                onValueChange={(value) => {
-                                                  // Set default color based on meeting type if color hasn't been manually changed
-                                                  const defaultColor = meetingTypeColors[value as keyof typeof meetingTypeColors] || "#4f46e5";
-                                                  setEditingEntry({ ...editingEntry, type: value, color: defaultColor });
-                                                }}
-                                              >
-                                                <SelectTrigger id="edit-type">
-                                                  <SelectValue placeholder="Select type" />
-                                                </SelectTrigger>
+                                              <Select value={editingEntry.type} onValueChange={(value) => { const defaultColor = meetingTypeColors[value as keyof typeof meetingTypeColors] || "#4f46e5"; setEditingEntry({ ...editingEntry, type: value, color: defaultColor }); }}>
+                                                <SelectTrigger id="edit-type"><SelectValue placeholder="Select type" /></SelectTrigger>
                                                 <SelectContent>
                                                   <SelectItem value="meeting">Meeting</SelectItem>
                                                   <SelectItem value="appointment">Appointment</SelectItem>
@@ -1255,15 +1284,8 @@ export default function AdminView() {
                                             </div>
                                             <div className="space-y-2">
                                               <Label htmlFor="edit-status">Status *</Label>
-                                              <Select
-                                                value={editingEntry.status}
-                                                onValueChange={(value) =>
-                                                  setEditingEntry({ ...editingEntry, status: value })
-                                                }
-                                              >
-                                                <SelectTrigger id="edit-status">
-                                                  <SelectValue placeholder="Select status" />
-                                                </SelectTrigger>
+                                              <Select value={editingEntry.status} onValueChange={(value) => setEditingEntry({ ...editingEntry, status: value })}>
+                                                <SelectTrigger id="edit-status"><SelectValue placeholder="Select status" /></SelectTrigger>
                                                 <SelectContent>
                                                   <SelectItem value="confirmed">Confirmed</SelectItem>
                                                   <SelectItem value="tentative">Tentative</SelectItem>
@@ -1272,105 +1294,62 @@ export default function AdminView() {
                                               </Select>
                                             </div>
                                           </div>
+                                          {/* Approved Status - visible to all, but conditionally disabled based on role and current status */}
+                                          <div className="space-y-2">
+                                              <Label htmlFor="edit-approved">Approval Status</Label>
+                                              <Select
+                                                  value={editingEntry.approved === undefined ? "true" : String(editingEntry.approved)}
+                                                  onValueChange={(value) => setEditingEntry({ ...editingEntry, approved: value === "true" })}
+                                                  disabled={session?.user?.role === "admin" && editingEntry.approved === false}
+                                              >
+                                                  <SelectTrigger id="edit-approved">
+                                                      <SelectValue placeholder="Set approval status" />
+                                                  </SelectTrigger>
+                                                  <SelectContent>
+                                                      <SelectItem value="true">Approved</SelectItem>
+                                                      <SelectItem value="false">Pending Approval</SelectItem>
+                                                  </SelectContent>
+                                              </Select>
+                                              {session?.user?.role === "admin" && editingEntry.approved === false && (
+                                                <p className="text-xs text-muted-foreground">
+                                                  This entry is pending approval. Admins cannot directly approve it here if it was auto-set due to a conflict.
+                                                </p>
+                                              )}
+                                          </div>
+                                          {/* Color Picker */}
                                           <div className="space-y-2">
                                             <Label htmlFor="edit-color">Color</Label>
                                             <div className="flex flex-col gap-2">
                                               <div className="flex gap-2">
-                                                <Input
-                                                  id="edit-color"
-                                                  type="color"
-                                                  value={editingEntry.color}
-                                                  onChange={(e) =>
-                                                    setEditingEntry({ ...editingEntry, color: e.target.value })
-                                                  }
-                                                  className="w-12 h-10 p-1"
-                                                />
-                                                <Input
-                                                  value={editingEntry.color}
-                                                  onChange={(e) =>
-                                                    setEditingEntry({ ...editingEntry, color: e.target.value })
-                                                  }
-                                                  className="flex-1"
-                                                />
+                                                <Input id="edit-color" type="color" value={editingEntry.color} onChange={(e) => setEditingEntry({ ...editingEntry, color: e.target.value })} className="w-12 h-10 p-1"/>
+                                                <Input value={editingEntry.color} onChange={(e) => setEditingEntry({ ...editingEntry, color: e.target.value })} className="flex-1"/>
                                               </div>
                                               <div className="flex flex-wrap gap-2 mt-2">
-                                                {predefinedColors.map((color) => (
-                                                  <button
-                                                    key={color.value}
-                                                    type="button"
-                                                    className={`w-8 h-8 rounded-full border ${editingEntry.color === color.value ? 'ring-2 ring-offset-2 ring-blue-500' : 'border-gray-200'}`}
-                                                    style={{ backgroundColor: color.value }}
-                                                    title={color.name}
-                                                    onClick={() => setEditingEntry({ ...editingEntry, color: color.value })}
-                                                  />
-                                                ))}
+                                                {predefinedColors.map((color) => (<button key={color.value} type="button" className={`w-8 h-8 rounded-full border ${editingEntry.color === color.value ? 'ring-2 ring-offset-2 ring-blue-500' : 'border-gray-200'}`} style={{ backgroundColor: color.value }} title={color.name} onClick={() => setEditingEntry({ ...editingEntry, color: color.value })}/>))}
                                               </div>
                                             </div>
                                           </div>
+                                          {/* Meeting With, Location (Specific), Description */}
                                           <div className="space-y-2">
                                             <Label htmlFor="edit-meeting-with">Meeting With</Label>
-                                            <Input
-                                              id="edit-meeting-with"
-                                              value={editingEntry.meetingWith || ""}
-                                              onChange={(e) =>
-                                                setEditingEntry({ ...editingEntry, meetingWith: e.target.value })
-                                              }
-                                            />
+                                            <Input id="edit-meeting-with" value={editingEntry.meetingWith || ""} onChange={(e) => setEditingEntry({ ...editingEntry, meetingWith: e.target.value })}/>
                                           </div>
-                                          <div className="space-y-2">
-                                            <Label htmlFor="edit-location">Location</Label>
-                                            <Input
-                                              id="edit-location"
-                                              value={editingEntry.location || ""}
-                                              onChange={(e) =>
-                                                setEditingEntry({ ...editingEntry, location: e.target.value })
-                                              }
-                                            />
-                                          </div>
+                                          {/* Specific Location field is already part of a grid above */}
                                           <div className="space-y-2">
                                             <Label htmlFor="edit-description">Description</Label>
-                                            <Textarea
-                                              id="edit-description"
-                                              value={editingEntry.description || ""}
-                                              onChange={(e) =>
-                                                setEditingEntry({ ...editingEntry, description: e.target.value })
-                                              }
-                                              rows={3}
-                                            />
+                                            <Textarea id="edit-description" value={editingEntry.description || ""} onChange={(e) => setEditingEntry({ ...editingEntry, description: e.target.value })} rows={3}/>
                                           </div>
                                         </div>
                                       )}
                                       <DialogFooter>
-                                        <Button
-                                          variant="outline"
-                                          onClick={() => setEditingEntry(null)}
-                                          disabled={isSubmitting}
-                                        >
-                                          Cancel
-                                        </Button>
-                                        <Button 
-                                          onClick={handleUpdateEntry} 
-                                          disabled={isSubmitting}
-                                          className={isSubmitting ? "opacity-80" : ""}
-                                        >
-                                          {isSubmitting ? (
-                                            <>
-                                              <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
-                                              Updating...
-                                            </>
-                                          ) : (
-                                            "Update Entry"
-                                          )}
+                                        <Button variant="outline" onClick={() => setEditingEntry(null)} disabled={isSubmitting}>Cancel</Button>
+                                        <Button onClick={handleUpdateEntry} disabled={isSubmitting} className={isSubmitting ? "opacity-80" : ""}>
+                                          {isSubmitting ? (<><div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>Updating...</>) : ("Update Entry")}
                                         </Button>
                                       </DialogFooter>
                                     </DialogContent>
                                   </Dialog>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6 bg-white/20 hover:bg-white/30"
-                                    onClick={() => confirmDelete(entry.id)}
-                                  >
+                                  <Button variant="ghost" size="icon" className="h-6 w-6 bg-white/20 hover:bg-white/30" onClick={() => confirmDelete(entry.id)}>
                                     <Trash2 className="h-3 w-3 text-white" />
                                   </Button>
                                 </div>
@@ -1405,22 +1384,28 @@ export default function AdminView() {
                                 style={{ backgroundColor: entry.color }}
                               ></div>
                               <div className="flex-1">
-                                <div className="flex justify-between">
+                                <div className="flex justify-between items-center">
                                   <h3 className="font-medium">{entry.title}</h3>
-                                  <Badge
-                                    variant={
-                                      entry.status === "confirmed"
-                                        ? "default"
-                                        : entry.status === "tentative"
-                                          ? "outline"
-                                          : "destructive"
-                                    }
-                                  >
-                                    {entry.status}
-                                  </Badge>
+                                  <div className="flex items-center gap-2">
+                                     {entry.approved === false && (
+                                      <Badge variant="outline" className="text-xs bg-yellow-100 text-yellow-700 border-yellow-300">Pending Approval</Badge>
+                                    )}
+                                    <Badge
+                                      variant={
+                                        entry.status === "confirmed" ? "default"
+                                        : entry.status === "tentative" ? "outline"
+                                        : "destructive"
+                                      }
+                                    >
+                                      {entry.status}
+                                    </Badge>
+                                  </div>
                                 </div>
                                 <p className="text-sm text-gray-500 mt-1">
                                   {entry.startTime} - {entry.endTime}
+                                </p>
+                                 <p className="text-sm text-gray-700">
+                                  <span className="font-medium">Room:</span> {entry.room}
                                 </p>
                                 {entry.meetingWith && (
                                   <p className="text-sm text-gray-700 mt-2">
@@ -1429,7 +1414,7 @@ export default function AdminView() {
                                 )}
                                 {entry.location && (
                                   <p className="text-sm text-gray-700">
-                                    <span className="font-medium">Location:</span> {entry.location}
+                                    <span className="font-medium">Specific Location:</span> {entry.location}
                                   </p>
                                 )}
                                 {entry.description && <p className="text-sm text-gray-700 mt-2">{entry.description}</p>}
@@ -1437,227 +1422,138 @@ export default function AdminView() {
                               <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <Dialog>
                                   <DialogTrigger asChild>
-                                    <Button
-                                      variant="outline"
-                                      size="icon"
-                                      className="h-8 w-8"
-                                      onClick={() => setEditingEntry(entry)}
-                                    >
+                                    <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setEditingEntry(entry)}>
                                       <Edit className="h-4 w-4" />
                                     </Button>
                                   </DialogTrigger>
                                   <DialogContent className="sm:max-w-[550px]">
-                                    <DialogHeader>
-                                      <DialogTitle>Edit Schedule Entry</DialogTitle>
-                                      <DialogDescription>Update the details of this schedule entry</DialogDescription>
-                                    </DialogHeader>
-                                    {editingEntry && (
-                                      <div className="grid gap-4 py-4">
-                                        <div className="grid grid-cols-2 gap-4">
-                                          <div className="space-y-2">
-                                            <Label htmlFor="edit-title" className="flex items-center">
-                                              Title <span className="text-red-500 ml-1">*</span>
-                                            </Label>
-                                            <Input
-                                              id="edit-title"
-                                              value={editingEntry.title}
-                                              onChange={(e) =>
-                                                setEditingEntry({ ...editingEntry, title: e.target.value })
-                                              }
-                                              required
-                                              className={!editingEntry.title ? "border-red-300 focus:border-red-500" : ""}
-                                            />
-                                          </div>
-                                          <div className="space-y-2">
-                                            <Label htmlFor="edit-date" className="flex items-center">
-                                              Date <span className="text-red-500 ml-1">*</span>
-                                            </Label>
-                                            <Input
-                                              id="edit-date"
-                                              type="date"
-                                              value={editingEntry.date}
-                                              onChange={(e) =>
-                                                setEditingEntry({ ...editingEntry, date: e.target.value })
-                                              }
-                                              required
-                                              className={!editingEntry.date ? "border-red-300 focus:border-red-500" : ""}
-                                            />
-                                          </div>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                          <div className="space-y-2">
-                                            <Label htmlFor="edit-start-time" className="flex items-center">
-                                              Start Time <span className="text-red-500 ml-1">*</span>
-                                            </Label>
-                                            <Input
-                                              id="edit-start-time"
-                                              type="time"
-                                              value={editingEntry.startTime}
-                                              onChange={(e) =>
-                                                setEditingEntry({ ...editingEntry, startTime: e.target.value })
-                                              }
-                                              required
-                                              className={!editingEntry.startTime ? "border-red-300 focus:border-red-500" : ""}
-                                            />
-                                          </div>
-                                          <div className="space-y-2">
-                                            <Label htmlFor="edit-end-time" className="flex items-center">
-                                              End Time <span className="text-red-500 ml-1">*</span>
-                                            </Label>
-                                            <Input
-                                              id="edit-end-time"
-                                              type="time"
-                                              value={editingEntry.endTime}
-                                              onChange={(e) =>
-                                                setEditingEntry({ ...editingEntry, endTime: e.target.value })
-                                              }
-                                              required
-                                              className={!editingEntry.endTime ? "border-red-300 focus:border-red-500" : ""}
-                                            />
-                                          </div>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                          <div className="space-y-2">
-                                            <Label htmlFor="edit-type">Meeting Type *</Label>
-                                            <Select
-                                              value={editingEntry.type}
-                                              onValueChange={(value) => {
-                                                // Set default color based on meeting type if color hasn't been manually changed
-                                                const defaultColor = meetingTypeColors[value as keyof typeof meetingTypeColors] || "#4f46e5";
-                                                setEditingEntry({ ...editingEntry, type: value, color: defaultColor });
-                                              }}
-                                            >
-                                              <SelectTrigger id="edit-type">
-                                                <SelectValue placeholder="Select type" />
-                                              </SelectTrigger>
-                                              <SelectContent>
-                                                <SelectItem value="meeting">Meeting</SelectItem>
-                                                <SelectItem value="appointment">Appointment</SelectItem>
-                                                <SelectItem value="event">Event</SelectItem>
-                                                <SelectItem value="class">Class</SelectItem>
-                                                <SelectItem value="office-hours">Office Hours</SelectItem>
-                                                <SelectItem value="unavailable">Unavailable</SelectItem>
-                                              </SelectContent>
-                                            </Select>
-                                          </div>
-                                          <div className="space-y-2">
-                                            <Label htmlFor="edit-status">Status *</Label>
-                                            <Select
-                                              value={editingEntry.status}
-                                              onValueChange={(value) =>
-                                                setEditingEntry({ ...editingEntry, status: value })
-                                              }
-                                            >
-                                              <SelectTrigger id="edit-status">
-                                                <SelectValue placeholder="Select status" />
-                                              </SelectTrigger>
-                                              <SelectContent>
-                                                <SelectItem value="confirmed">Confirmed</SelectItem>
-                                                <SelectItem value="tentative">Tentative</SelectItem>
-                                                <SelectItem value="cancelled">Cancelled</SelectItem>
-                                              </SelectContent>
-                                            </Select>
-                                          </div>
-                                        </div>
-                                        <div className="space-y-2">
-                                          <Label htmlFor="edit-color">Color</Label>
-                                          <div className="flex flex-col gap-2">
-                                            <div className="flex gap-2">
-                                              <Input
-                                                id="edit-color"
-                                                type="color"
-                                                value={editingEntry.color}
-                                                onChange={(e) =>
-                                                  setEditingEntry({ ...editingEntry, color: e.target.value })
-                                                }
-                                                className="w-12 h-10 p-1"
-                                              />
-                                              <Input
-                                                value={editingEntry.color}
-                                                onChange={(e) =>
-                                                  setEditingEntry({ ...editingEntry, color: e.target.value })
-                                                }
-                                                className="flex-1"
-                                              />
+                                      <DialogHeader>
+                                        <DialogTitle>Edit Schedule Entry</DialogTitle>
+                                        <DialogDescription>Update the details of this schedule entry</DialogDescription>
+                                      </DialogHeader>
+                                      {editingEntry && (
+                                        <div className="grid gap-4 py-4">
+                                          {/* Title and Date */}
+                                          <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                              <Label htmlFor="edit-title">Title *</Label>
+                                              <Input id="edit-title" value={editingEntry.title} onChange={(e) => setEditingEntry({ ...editingEntry, title: e.target.value })} required />
                                             </div>
-                                            <div className="flex flex-wrap gap-2 mt-2">
-                                              {predefinedColors.map((color) => (
-                                                <button
-                                                  key={color.value}
-                                                  type="button"
-                                                  className={`w-8 h-8 rounded-full border ${editingEntry.color === color.value ? 'ring-2 ring-offset-2 ring-blue-500' : 'border-gray-200'}`}
-                                                  style={{ backgroundColor: color.value }}
-                                                  title={color.name}
-                                                  onClick={() => setEditingEntry({ ...editingEntry, color: color.value })}
-                                                />
-                                              ))}
+                                            <div className="space-y-2">
+                                              <Label htmlFor="edit-date">Date *</Label>
+                                              <Input id="edit-date" type="date" value={editingEntry.date} onChange={(e) => setEditingEntry({ ...editingEntry, date: e.target.value })} required />
                                             </div>
                                           </div>
+                                          {/* Room and Specific Location */}
+                                          <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                              <Label htmlFor="edit-room">Room *</Label>
+                                              <Select value={editingEntry.room} onValueChange={(value: RoomType) => setEditingEntry({ ...editingEntry, room: value })}>
+                                                <SelectTrigger id="edit-room"><SelectValue placeholder="Select room" /></SelectTrigger>
+                                                <SelectContent>
+                                                  {availableRooms.map(roomName => (<SelectItem key={roomName} value={roomName}>{roomName}</SelectItem>))}
+                                                </SelectContent>
+                                              </Select>
+                                            </div>
+                                            <div className="space-y-2">
+                                              <Label htmlFor="edit-location">Specific Location (Optional)</Label>
+                                              <Input id="edit-location" value={editingEntry.location || ""} onChange={(e) => setEditingEntry({ ...editingEntry, location: e.target.value })} />
+                                            </div>
+                                          </div>
+                                          {/* Start Time and End Time */}
+                                          <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                              <Label htmlFor="edit-start-time">Start Time *</Label>
+                                              <Input id="edit-start-time" type="time" value={editingEntry.startTime} onChange={(e) => setEditingEntry({ ...editingEntry, startTime: e.target.value })} required />
+                                            </div>
+                                            <div className="space-y-2">
+                                              <Label htmlFor="edit-end-time">End Time *</Label>
+                                              <Input id="edit-end-time" type="time" value={editingEntry.endTime} onChange={(e) => setEditingEntry({ ...editingEntry, endTime: e.target.value })} required />
+                                            </div>
+                                          </div>
+                                          {/* Meeting Type and Status */}
+                                          <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                              <Label htmlFor="edit-type">Meeting Type *</Label>
+                                              <Select value={editingEntry.type} onValueChange={(value) => { const defaultColor = meetingTypeColors[value as keyof typeof meetingTypeColors] || "#4f46e5"; setEditingEntry({ ...editingEntry, type: value, color: defaultColor }); }}>
+                                                <SelectTrigger id="edit-type"><SelectValue placeholder="Select type" /></SelectTrigger>
+                                                <SelectContent>
+                                                  <SelectItem value="meeting">Meeting</SelectItem>
+                                                  <SelectItem value="appointment">Appointment</SelectItem>
+                                                  <SelectItem value="event">Event</SelectItem>
+                                                  <SelectItem value="class">Class</SelectItem>
+                                                  <SelectItem value="office-hours">Office Hours</SelectItem>
+                                                  <SelectItem value="unavailable">Unavailable</SelectItem>
+                                                </SelectContent>
+                                              </Select>
+                                            </div>
+                                            <div className="space-y-2">
+                                              <Label htmlFor="edit-status">Status *</Label>
+                                              <Select value={editingEntry.status} onValueChange={(value) => setEditingEntry({ ...editingEntry, status: value })}>
+                                                <SelectTrigger id="edit-status"><SelectValue placeholder="Select status" /></SelectTrigger>
+                                                <SelectContent>
+                                                  <SelectItem value="confirmed">Confirmed</SelectItem>
+                                                  <SelectItem value="tentative">Tentative</SelectItem>
+                                                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                                                </SelectContent>
+                                              </Select>
+                                            </div>
+                                          </div>
+                                           {/* Approved Status - visible to all, but conditionally disabled based on role and current status */}
+                                          <div className="space-y-2">
+                                              <Label htmlFor="edit-approved">Approval Status</Label>
+                                              <Select
+                                                  value={editingEntry.approved === undefined ? "true" : String(editingEntry.approved)}
+                                                  onValueChange={(value) => setEditingEntry({ ...editingEntry, approved: value === "true" })}
+                                                  disabled={session?.user?.role === "admin" && editingEntry.approved === false}
+                                              >
+                                                  <SelectTrigger id="edit-approved">
+                                                      <SelectValue placeholder="Set approval status" />
+                                                  </SelectTrigger>
+                                                  <SelectContent>
+                                                      <SelectItem value="true">Approved</SelectItem>
+                                                      <SelectItem value="false">Pending Approval</SelectItem>
+                                                  </SelectContent>
+                                              </Select>
+                                              {session?.user?.role === "admin" && editingEntry.approved === false && (
+                                                <p className="text-xs text-muted-foreground">
+                                                  This entry is pending approval. Admins cannot directly approve it here if it was auto-set due to a conflict.
+                                                </p>
+                                              )}
+                                          </div>
+                                          {/* Color Picker */}
+                                          <div className="space-y-2">
+                                            <Label htmlFor="edit-color">Color</Label>
+                                            <div className="flex flex-col gap-2">
+                                              <div className="flex gap-2">
+                                                <Input id="edit-color" type="color" value={editingEntry.color} onChange={(e) => setEditingEntry({ ...editingEntry, color: e.target.value })} className="w-12 h-10 p-1"/>
+                                                <Input value={editingEntry.color} onChange={(e) => setEditingEntry({ ...editingEntry, color: e.target.value })} className="flex-1"/>
+                                              </div>
+                                              <div className="flex flex-wrap gap-2 mt-2">
+                                                {predefinedColors.map((color) => (<button key={color.value} type="button" className={`w-8 h-8 rounded-full border ${editingEntry.color === color.value ? 'ring-2 ring-offset-2 ring-blue-500' : 'border-gray-200'}`} style={{ backgroundColor: color.value }} title={color.name} onClick={() => setEditingEntry({ ...editingEntry, color: color.value })}/>))}
+                                              </div>
+                                            </div>
+                                          </div>
+                                          {/* Meeting With, Description */}
+                                          <div className="space-y-2">
+                                            <Label htmlFor="edit-meeting-with">Meeting With</Label>
+                                            <Input id="edit-meeting-with" value={editingEntry.meetingWith || ""} onChange={(e) => setEditingEntry({ ...editingEntry, meetingWith: e.target.value })}/>
+                                          </div>
+                                          <div className="space-y-2">
+                                            <Label htmlFor="edit-description">Description</Label>
+                                            <Textarea id="edit-description" value={editingEntry.description || ""} onChange={(e) => setEditingEntry({ ...editingEntry, description: e.target.value })} rows={3}/>
+                                          </div>
                                         </div>
-                                        <div className="space-y-2">
-                                          <Label htmlFor="edit-meeting-with">Meeting With</Label>
-                                          <Input
-                                            id="edit-meeting-with"
-                                            value={editingEntry.meetingWith || ""}
-                                            onChange={(e) =>
-                                              setEditingEntry({ ...editingEntry, meetingWith: e.target.value })
-                                            }
-                                          />
-                                        </div>
-                                        <div className="space-y-2">
-                                          <Label htmlFor="edit-location">Location</Label>
-                                          <Input
-                                            id="edit-location"
-                                            value={editingEntry.location || ""}
-                                            onChange={(e) =>
-                                              setEditingEntry({ ...editingEntry, location: e.target.value })
-                                            }
-                                          />
-                                        </div>
-                                        <div className="space-y-2">
-                                          <Label htmlFor="edit-description">Description</Label>
-                                          <Textarea
-                                            id="edit-description"
-                                            value={editingEntry.description || ""}
-                                            onChange={(e) =>
-                                              setEditingEntry({ ...editingEntry, description: e.target.value })
-                                            }
-                                            rows={3}
-                                          />
-                                        </div>
-                                      </div>
-                                    )}
-                                    <DialogFooter>
-                                      <Button
-                                        variant="outline"
-                                        onClick={() => setEditingEntry(null)}
-                                        disabled={isSubmitting}
-                                      >
-                                        Cancel
-                                      </Button>
-                                      <Button 
-                                        onClick={handleUpdateEntry} 
-                                        disabled={isSubmitting}
-                                        className={isSubmitting ? "opacity-80" : ""}
-                                      >
-                                        {isSubmitting ? (
-                                          <>
-                                            <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
-                                            Updating...
-                                          </>
-                                        ) : (
-                                          "Update Entry"
-                                        )}
-                                      </Button>
-                                    </DialogFooter>
+                                      )}
+                                      <DialogFooter>
+                                        <Button variant="outline" onClick={() => setEditingEntry(null)} disabled={isSubmitting}>Cancel</Button>
+                                        <Button onClick={handleUpdateEntry} disabled={isSubmitting} className={isSubmitting ? "opacity-80" : ""}>
+                                          {isSubmitting ? (<><div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>Updating...</>) : ("Update Entry")}
+                                        </Button>
+                                      </DialogFooter>
                                   </DialogContent>
                                 </Dialog>
-                                <Button
-                                  variant="outline"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  onClick={() => confirmDelete(entry.id)}
-                                >
+                                <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => confirmDelete(entry.id)}>
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
                               </div>
@@ -1703,4 +1599,8 @@ export default function AdminView() {
     </div>
   )
 }
+// The fetchScheduleData function name was changed to fetchScheduleDataForComponent
+// to avoid conflicts with the global fetch. This needs to be consistent.
+// The previous diffs also introduced `currentRoomFilter` and `availableRooms` which are expected here.
+// The `ScheduleEntry` type from `lib/types` is assumed to be updated with `room` and `approved`.
 
